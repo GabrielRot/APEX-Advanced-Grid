@@ -64,22 +64,6 @@ procedure P_AJAX( p_plugin in            apex_plugin.t_plugin
   
 begin
 
-  -- vc_data_provider_statement := 
-  -- '
-  -- declare
-  --   function tmp_function return clob as
-  --   begin
-  --     '|| bind_variable_value(v_function_returning_clob_json) || '
-  --   end;
-  -- begin
-  --   :res := tmp_function;
-  -- end;
-  -- ';
-
-  -- geral.pr_grava_sql(vc_data_provider_statement);
-
-  -- execute immediate vc_data_provider_statement using out vc_json_return;
-
   vc_json_return := apex_plugin_util.get_plsql_func_result_clob( p_plsql_function            => v_function_returning_clob_json);
 
   -- apex_plugin_util.execute_plsql_code(vc_data_provider_statement);
