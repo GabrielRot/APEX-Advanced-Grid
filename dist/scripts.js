@@ -14,7 +14,7 @@ class AgGrid {
   constructor(staticId, ajaxId, itemsToSubmit) {
     this.staticId      = staticId;
     this._ajaxId       = ajaxId;
-    this.itemsToSubmit = itemsToSubmit.split(',').map((itemToSubmit) => `#${itemToSubmit}`).join(',');
+    this.itemsToSubmit = itemsToSubmit.split(',');
     this._utils        = new Utils();
 
     this._initialize();
@@ -29,19 +29,23 @@ class AgGrid {
 
     this.container.className = 'ag-container';
 
-    const data = await this._makeJSONRequest();
-
     try {
-      this.buildAG(data);
+      const data = await this._makeJSONRequest();
+
+      try {
+        this.buildAG(data);
+      } catch (e) {
+        this._utils.message.clearMessages();
+        this._utils.message.showErrorMessage(`Falha ao construir AG: \n${e.message}`);
+
+        console.error(e);
+      }
     } catch (e) {
-      this._utils.message.clearMessages();
-      this._utils.message.showErrorMessage(`Falha ao construir AG: \n${e.message}`);
-
-      console.error(e);
+      console.error('Falha com AJAX callback:', e);
+    } finally {
+      this._gridUtils.bindDynamicActions.afterRefresh();
+      this._gridUtils.bindActions.refresh();
     }
-
-    this._gridUtils.bindDynamicActions.afterRefresh();
-    this._gridUtils.bindActions.refresh();
   }
 
   _createContainer() {
@@ -95,17 +99,26 @@ class AgGrid {
 
     if (data) {
       this._data = data;
+      // this._data.options.columns.totalLength = Object.values(this._data.options.columns).length;
 
-      this._data.pagination = {
-        columns: {
-          offset: 0,
-          paginate: 50,
-        },
-        rows: {
-          offset: 0,
-          paginate: 50,
-        }
+      if(!this._gridUtils.validateOptions()) {
+        this._gridUtils.noDataFound.create(this.container);
+
+        return;
       }
+
+      this._gridUtils.validatePagination();
+
+      // this._data.options.paginations = {
+      //   columns: {
+      //     offset: 0,
+      //     pagination: (columnsLength > 50) ? 50 : columnsLength,
+      //   },
+      //   rows: {
+      //     offset: 0,
+      //     pagination: 50,
+      //   }
+      // }
 
       this.buildAGToolbar(this.container);
 
@@ -113,7 +126,14 @@ class AgGrid {
 
       this.container.appendChild(this._agHeader);
 
-      this.buildAGColumnHeader(this._agHeader, data);
+      this._gridUtils.columnUtils.setColumnsId();
+
+      this.buildAGColumnHeader(
+        this._agHeader, 
+        data, 
+        this._data.options?.paginations?.columns?.offset, 
+        this._data.options?.paginations?.columns?.pagination-1
+      );
 
       $('.ag-col-resizable').each(function() {
         const $header  = $(this);
@@ -138,14 +158,26 @@ class AgGrid {
 
       this.container.appendChild(this._agBody.bodyContainer);
 
-      this.buildAGBodyRow(this._agBody.rowsContainer, data);
+      if (this._data.model.data.length > 0) {
+        this.buildAGBodyRow(this._agBody.rowsContainer, this._data, this._data.options.paginations.rows.offset, this._data.options.paginations.rows.pagination-1);
+
+        this._agBody.bodyFooterContainer.append(this._gridUtils.footerUtils.buildPaginationFooter(this._data));
+
+        this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(this.staticId);
+      } else {
+        this._gridUtils.noDataFound.create(this._agBody.rowsContainer);
+      }
+
+      window.dispatchEvent(new Event('resize'));
 
       this._gridUtils.addScrollGrid(this.staticId);
 
       this._gridUtils.setAutoResize(this.staticId);
 
-      this._gridUtils.columnUtils.headerUtils.setStickyHeader(this.staticId);
-      
+      // this._gridUtils.columnUtils.headerUtils.setStickyHeader(this.staticId);
+
+    } else {
+      this._gridUtils.noDataFound.create(this.container);
     }
 
     console.timeEnd('buildAG');
@@ -191,43 +223,53 @@ class AgGrid {
     return headerContainer;
   }
 
-  buildAGColumnHeader(pHeaderContainer, pData) {
-    let columsOption = Object.values(pData.options?.columns);
-    let columnsKeys  = Object.keys(pData.options?.columns);
+  buildAGColumnHeader(pHeaderContainer, pData, pOffset, pPagination) {
+    let columnsOption = Object.values(pData.options?.columns);
+    let columnsKeys   = Object.keys(pData.options?.columns);
 
     let fragment = document.createDocumentFragment();
 
-    columsOption.forEach((columnOption, i) => {
-      if (!columnOption.staticId) columnOption.staticId = this._utils.random.getRandomId();
+    let columnOption;
 
-       let columnHeader = document.createElement('div');
+    let i;
 
-      columnHeader.className = 'ag-col-header ag-col-resizable ag-u-flex';
+    for(i = pOffset; i <= (pOffset + pPagination); i++) {
+      columnOption = columnsOption[i];
 
-      columnHeader.id = `${columnOption.staticId}`;
+      if (columnOption) {    
+        // if (!columnOption.staticId) columnOption.staticId = this._utils.random.getRandomId();
 
-      columnHeader.setAttribute('data-column', `${this._utils.escapeHtml(columnsKeys[i])}`);
+        let columnHeader = document.createElement('div');
 
-      if (columnOption.width) columnHeader.style.width = `${columnOption.width}px`;
+        columnHeader.className = 'ag-col-header ag-col-resizable ag-u-flex';
 
-      let tradeColumnSequence = document.createElement('div');
+        columnHeader.id = `${columnOption.staticId}`;
 
-      let columnHeaderValue = document.createElement('div');
+        columnHeader.setAttribute('data-column', `${this._utils.escapeHtml(columnsKeys[i])}`);
 
-      columnHeaderValue.className = 'ag-col-header-content';
+        if (columnOption.width) columnHeader.style.width = `${columnOption.width}px`;
 
-      columnHeaderValue.style.textAlign = columnOption.alignment.toLowerCase() || 'start';
+        let tradeColumnSequence = document.createElement('div');
 
-      columnHeaderValue.innerText = this._utils.escapeHtml(columnOption.header);
+        let columnHeaderValue = document.createElement('div');
 
-      columnHeader.appendChild(tradeColumnSequence);
+        columnHeaderValue.className = 'ag-col-header-content';
 
-      columnHeader.appendChild(columnHeaderValue);
+        columnHeaderValue.style.textAlign = columnOption.alignment.toLowerCase() || 'start';
 
-      columnHeader.appendChild(this._gridUtils.columnUtils.headerUtils.buildColumnOrderBy());
+        columnHeaderValue.innerText = this._utils.escapeHtml(columnOption.header);
 
-      fragment.appendChild(columnHeader);
-    });
+        columnHeader.appendChild(tradeColumnSequence);
+
+        columnHeader.appendChild(columnHeaderValue);
+
+        columnHeader.appendChild(this._gridUtils.columnUtils.headerUtils.buildColumnOrderBy());
+
+        fragment.appendChild(columnHeader);
+      }
+
+      this._data.options.paginations.columns.offset = pOffset + pPagination;
+    };
 
     pHeaderContainer.appendChild(fragment);
   }
@@ -255,108 +297,57 @@ class AgGrid {
     }
   }
 
-  buildAGBodyRow(pContainer, pData) {
+  buildAGBodyRow(pContainer, pData, pOffset, pPagination, pColumnsOffset = 0, pColumnsPagination = null) {
     let rowContainer
     let pkRowData;
-    let rowColumnContainer;
     let columnsOptions = pData.options?.columns || {};
-    let columnOption;
-    let errorMessage;
-    let columnDOMConfig = {};
-    let customColumnData;
-    let badgeColor = "#FFFFFF";
-    let fontColor  = "#FFFFFF";
     let columns;
+    let columnsPagination = (pColumnsPagination != null) ? pColumnsPagination : this._data.options.paginations.columns.pagination-1;
+
+    let i;
+    let rowData;
+
+    let j;
+
+    let displayedRowsQty = 0;
 
     let fragment = document.createDocumentFragment();
 
-    pData.model?.data.forEach((rowData, i) => {
-      rowContainer = document.createElement('div');
-      rowContainer.className = 'ag-row-container ag-u-flex';
-      
-      pkRowData    = [];
+    for(i = pOffset; i <= (pOffset + pPagination); i++) {
+      rowData = pData.model?.data[i];
 
-      if (!columns) {
-         columns = Object.keys(rowData);
+      if (rowData) {
+        rowContainer = document.createElement('div');
+        rowContainer.className = 'ag-row-container ag-u-flex';
+        
+        pkRowData    = [];
+
+        if (!columns) {
+          columns = Object.keys(rowData);
+        }
+
+        for (j = pColumnsOffset; j <= columnsPagination; j++) {
+          let rowColumnData = rowData[columns[j]];
+
+          if (rowColumnData) rowContainer.appendChild(this._gridUtils.columnUtils.buildRowColumn(rowColumnData, columnsOptions, columns[j]));
+        }
+
+        fragment.appendChild(rowContainer);
+
+        displayedRowsQty = i+1;
+      } else {
+        i = pOffset + pPagination;
       }
 
-      columns.forEach((columnName) => {
-        let rowColumnData = rowData[columnName];
+    }
 
-        columnOption = columnsOptions[columnName] 
-                    || columnsOptions[columnName.toUpperCase()] 
-                    || columnsOptions[columnName.toLowerCase()] 
-                    || null;      
+    this._data.options.paginations.rows.offset = i;
 
-        if (!columnOption) {
-          errorMessage = `Opções para a coluna "${columnName.toUpperCase()}" não encontrada.`;
-
-          this._utils.message.showErrorMessage(errorMessage);
-
-          throw new Error(errorMessage);
-        }
-
-        if (!columnDOMConfig[columnName]) {
-          columnDOMConfig[columnName] = {
-            "width": $(`#${columnOption.staticId}`).css('width'),
-            "height": $(`#${columnOption.staticId}`).css('height'),
-          }
-        } 
-
-        // if (columnOption.primaryKey) pkRowData.push(rowColumnData.value);
-
-        rowColumnContainer = document.createElement('div');
-        
-        rowColumnContainer.className    = 'ag-cell-container';
-
-        rowColumnContainer.style.textAlign = columnOption.alignment.toLowerCase() || 'start';
-        rowColumnContainer.style.width     = columnDOMConfig[columnName].width;
-        // rowColumnContainer.style.width     = document.getElementById(columnOption.staticId).getBoundingClientRect().width;
-        rowColumnContainer.style.height    = columnDOMConfig[columnName].height;
-
-        console.log(rowColumnContainer.style.width);
-
-        rowColumnContainer.setAttribute('data-column-header-id', columnOption.staticId);
-        rowColumnContainer.setAttribute('data-column', this._utils.escapeHtml(columnName));
-        
-        if (rowColumnData.custom) {
-          customColumnData = rowColumnData.custom;
-
-          if (customColumnData.displayType == "BADGE") {
-            if (rowColumnData.value) {
-              if (["DANGER", "WARNING", "SUCCESS", "INFO"].includes(customColumnData.badgeColor.toUpperCase())) {
-                badgeColor = this._utils.color.getTemplateColor(customColumnData.badgeColor)?.color;
-                fontColor  = this._utils.color.getTemplateColor(customColumnData.badgeColor)?.fontColor;
-              } else {
-                badgeColor = customColumnData.badgeColor;
-                fontColor  = (customColumnData.fontColor) ? customColumnData.fontColor : this._utils.color.getContrastYIQ(customColumnData.fontColor);
-              }
-
-              rowColumnContainer.appendChild(
-                this._gridUtils.columnUtils.cellUtils.buildBadgeCell(
-                  this._utils.escapeHtml(rowColumnData.value),
-                  badgeColor,
-                  fontColor,
-                  (customColumnData.badgeType || 1)
-                )
-              );
-
-              rowColumnContainer.style.minWidth = '120px';
-              document.getElementById(columnOption.staticId).style.minWidth = '120px';             
-            }
-          }
-        }
-        else {
-          rowColumnContainer.innerText = this._utils.escapeHtml(rowColumnData.value);
-        }
-
-        rowContainer.appendChild(rowColumnContainer);
-      });
-
-      fragment.appendChild(rowContainer);
-    });
+    if (pData.options.paginations.rows.type) this._gridUtils.footerUtils.setPaginationLabel(this.staticId, pOffset, displayedRowsQty);
 
     pContainer.appendChild(fragment);
+
+    window.dispatchEvent(new Event('resize'));
   }
 
   _badgeColumnContainer;
@@ -371,15 +362,81 @@ class AgGrid {
 
   _autoResizeTimer;
 
+  _columnOption = {};
+  _columnDOMConfig = {};
+  _rowColumnContainer;
+  _customColumnData;
+
+  _badgeColor;
+  _fontColor;
+
 
   _gridUtils = {
+    validateOptions: () => {
+      if (!this._data.options) this._data.options = {};
+
+      if (!this._data.model || !this._data.model?.data) return false;
+
+      let rowData = this._data.model.data[0];
+      let keys    = Object.keys(rowData);
+
+      if (!this._data.options.columns) this._data.options.columns = {};
+
+      let oldColumns = this._data.options.columns;
+      let newColumns = {}
+
+      keys.forEach((key) => {
+        let column = oldColumns[key] || {};
+
+        newColumns[key] = {
+          header:    column.header    ?? key,
+          alignment: column.alignment ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
+          type:      column.type      ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
+        };
+      });
+
+      this._data.options.columns = newColumns;
+
+      return true;
+    },
+    noDataFound: {
+      create: (pContainer) => {
+        let noDataFoundContainer = document.createElement('div');
+
+        noDataFoundContainer.className = 'ag-nodata-found-container';
+
+        let noDataFoundIconContainer = document.createElement('div');
+
+        noDataFoundIconContainer.innerHTML = `
+          <svg width="30px" height="30px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15.7955 15.8111L21 21M18 10.5C18 14.6421 14.6421 18 10.5 18C6.35786 18 3 14.6421 3 10.5C3 6.35786 6.35786 3 10.5 3C14.6421 3 18 6.35786 18 10.5Z" stroke="#CECECE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        `;
+
+        noDataFoundIconContainer.className = 'ag-nodatafound-icon-container';
+
+        noDataFoundContainer.appendChild(noDataFoundIconContainer);
+
+        let noDataFoundLabelContainer = document.createElement('div');
+
+        noDataFoundLabelContainer.className = 'ag-nodatafound-label-container';
+
+        let noDataFoundLabel = document.createElement('span');
+
+        noDataFoundLabel.innerText = 'Nenhum dado encontrado';
+
+        noDataFoundLabelContainer.appendChild(noDataFoundLabel);
+
+        noDataFoundContainer.appendChild(noDataFoundLabelContainer);
+
+        pContainer.appendChild(noDataFoundContainer);
+      }
+    },
     setAutoResize: (pStaticId) => {
-      const autoResize = () => {
+      const autoResize = () => { 
         clearTimeout(this._autoResizeTimer);
 
         this._autoResizeTimer = setTimeout(() => {
-          console.log('efetuando resize');
-
           let columnHeaders = document.querySelectorAll(`#ag-${pStaticId} .ag-col-header`);
           
           for(const columnHeader of columnHeaders) {
@@ -387,7 +444,7 @@ class AgGrid {
               rowColumn.style.width = `${columnHeader.getBoundingClientRect().width}px`;
             });
           }
-        }, 1200);       
+        }, 100);       
       };
 
       // window.removeEventListener('resize', autoResize);
@@ -433,14 +490,119 @@ class AgGrid {
     addScrollGrid: (pStaticId) => {
       const scroller        = document.querySelector(`#${pStaticId} .ag-rows-container`);
       const columnContainer = document.querySelector(`#${pStaticId} .ag-col-header-container`);
+      
+      let data            = this._data;
+      let columnOptions   = data.options?.columns;
+      let paginations     = data.options?.paginations;
+      let columnsLength   = Object.values(columnOptions).length;
+      let renderedColumns;
 
-      function setScrollerScrollPositionToColumnContainer() {
+      let buildAGColumnHeader = this.buildAGColumnHeader.bind(this);
+      let headerContainer     = this._agHeader;
+
+      let offset;
+      let pagination;
+
+      let rowData;
+      let rowColumnKeys;
+
+      let rowsLength = data.model?.data.length;
+
+      let offsetRows;
+      let paginationRows;
+
+      let renderedRows;
+
+      const setHeaderContainerPositionAndPagination = () => {
         columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
+        
+        if ((scroller.scrollLeft + scroller.clientWidth)+2 >= scroller.scrollWidth) {
+          renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
+
+          if (renderedColumns.length < columnsLength) {
+            offset     = paginations.columns?.offset;
+            pagination = paginations.columns?.pagination;
+
+            offset++;
+
+            if (pagination > columnsLength) {
+              pagination = (pagination - columnsLength);
+            }
+
+            if (offset == columnsLength) {
+              offset = columnsLength-1;
+            }
+
+            buildAGColumnHeader(headerContainer, data, offset, pagination);
+
+            document.querySelectorAll(`#${pStaticId} .ag-row-container`).forEach((rowContainer, i) => {
+              rowData       = data.model.data[i];
+              rowColumnKeys = Object.keys(rowData);
+
+              for (let j = offset; j <= (pagination + offset); j++) {
+                if (rowColumnKeys[j]) {
+                  rowContainer.appendChild(this._gridUtils.columnUtils.buildRowColumn(rowData[rowColumnKeys[j]], data.options.columns, rowColumnKeys[j]));
+                } else {
+                  j = (pagination + offset);
+                }
+              }
+            });
+          }
+        }
       }
 
-      scroller.removeEventListener('scroll', setScrollerScrollPositionToColumnContainer);
+      const scrollLinesPagination = () => {
+        if ((document.documentElement.scrollTop + document.documentElement.clientHeight)+10 >= document.documentElement.scrollHeight) {
+          renderedRows    = document.querySelectorAll(`#${pStaticId} .ag-row-container`);
+          renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
 
-      scroller.addEventListener('scroll', setScrollerScrollPositionToColumnContainer);
+          if (renderedRows.length < rowsLength) {
+            offsetRows     = this._data.options.paginations.rows.offset;
+            paginationRows = this._data.options.paginations.rows.pagination;
+
+            offsetRows++;
+
+            if (paginationRows > rowsLength) {
+              paginationRows = (paginationRows - rowsLength);
+            }
+
+            if (offsetRows == rowsLength) {
+              offsetRows = rowsLength-1;
+            }
+
+            this.buildAGBodyRow(this._agBody.rowsContainer, data, offsetRows-1, paginationRows, 0, renderedColumns.length -1);
+            console.log('renderizou vertical');
+          }
+        }
+      }
+
+      scroller.removeEventListener('scroll', setHeaderContainerPositionAndPagination);
+      scroller.addEventListener('scroll', setHeaderContainerPositionAndPagination);
+
+      if (String(this._data.options.paginations.rows.type).toLowerCase() == 'scroll' || !this._data.options.paginations.rows) {
+        document.removeEventListener('scroll', scrollLinesPagination);
+        document.addEventListener('scroll', scrollLinesPagination);
+      }
+    },
+    validatePagination: () => {
+      let columnsLength = Object.values(this._data.options?.columns).length;
+
+      this._data.options.paginations         = this._data.options.paginations || {};
+
+      this._data.options.paginations.columns = this._data.options.paginations.columns || {};
+
+      this._data.options.paginations.columns.offset     = this._data.options.paginations.columns.offset || 0;
+      this._data.options.paginations.columns.pagination = this._data.options.paginations.columns.pagination || (columnsLength > 50) ? 50 : columnsLength;
+
+      this._data.options.paginations.rows = this._data.options.paginations.rows || {}
+
+      this._data.options.paginations.rows.type       = this._data.options.paginations.rows.type.toLowerCase() || 'scroll';
+      this._data.options.paginations.rows.offset     = this._data.options.paginations.rows.offset             || 0;
+      this._data.options.paginations.rows.pagination = this._data.options.paginations.rows.pagination         || 50;
+
+      if (!['scroll', 'page'].includes(this._data.options.paginations.rows.type.toLowerCase())) throw new Error('Tipo de paginação por linhas incorreto');
+
+      if (this._data.options.paginations.rows.type.toLowerCase() == 'page' && this._data.options.paginations.rows.pagination < 5) throw new Error('A paginação por linhas deve ter no mínimo 5 linhas');
     },
     columnUtils: {
       headerUtils: {
@@ -484,7 +646,77 @@ class AgGrid {
           return this._columnHeaderOrderBy;
         }
       },
+      buildRowColumn: (pRowColumnData, pColumnsOptions, pColumnName) => {
+        this._columnOption = pColumnsOptions[pColumnName] 
+                          || pColumnName[pColumnName.toUpperCase()] 
+                          || pColumnsOptions[pColumnName.toLowerCase()] 
+                          || null;      
+
+        if (!this._columnOption) {
+          errorMessage = `Opções para a coluna "${pColumnName.toUpperCase()}" não encontrada.`;
+
+          this._utils.message.showErrorMessage(errorMessage);
+
+          throw new Error(errorMessage);
+        }
+
+        if (!this._columnDOMConfig[pColumnName]) {
+          this._columnDOMConfig[pColumnName] = {
+            "width": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().width}px`,
+            "height": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().height}px`,
+          }
+        }
+
+        this._rowColumnContainer = document.createElement('div');
+        
+        this._rowColumnContainer.className    = 'ag-cell-container';
+
+        this._rowColumnContainer.style.textAlign = this._columnOption.alignment.toLowerCase() || 'start';
+        this._rowColumnContainer.style.width     = this._columnDOMConfig[pColumnName].width;
+        // rowColumnContainer.style.width     = document.getElementById(columnOption.staticId).getBoundingClientRect().width;
+        this._rowColumnContainer.style.height    = this._columnDOMConfig[pColumnName].height;
+
+        this._rowColumnContainer.setAttribute('data-column-header-id', this._columnOption.staticId);
+        this._rowColumnContainer.setAttribute('data-column', this._utils.escapeHtml(pColumnName));
+        
+        if (pRowColumnData.custom) {
+          this._customColumnData = pRowColumnData.custom;
+
+          if (this._customColumnData.displayType == "BADGE") {
+            if (pRowColumnData.value) {
+              if (["DANGER", "WARNING", "SUCCESS", "INFO"].includes(this._customColumnData.badgeColor.toUpperCase())) {
+                this._badgeColor = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.color;
+                this._fontColor  = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.fontColor;
+              } else {
+                this._badgeColor = this._customColumnData.badgeColor;
+                this._fontColor  = (this._customColumnData.fontColor) ? this._customColumnData.fontColor : this._utils.color.getContrastYIQ(this._customColumnData.fontColor);
+              }
+
+              this._rowColumnContainer.appendChild(
+                this._gridUtils.columnUtils.cellUtils.buildBadgeCell(
+                  this._utils.escapeHtml(pRowColumnData.value),
+                  this._badgeColor,
+                  this._fontColor,
+                  (this._customColumnData.badgeType || 1)
+                )
+              );
+
+              this._rowColumnContainer.style.minWidth = '120px';
+
+              if (document.getElementById(this._columnOption.staticId)) document.getElementById(this._columnOption.staticId).style.minWidth = '120px';             
+            }
+          }
+        }
+        else {
+          this._rowColumnContainer.innerText = this._utils.escapeHtml(pRowColumnData.value);
+        }
+
+        return this._rowColumnContainer;
+      },
       cellUtils: {
+        buildCell: () => {
+
+        },
         buildBadgeCell: (pValue, pBadgeColor = '#9500BA', pFontColor = "#FFFFFF", pType = 1) => {
           this._badgeColumnContainer = document.createElement('div');
           
@@ -511,6 +743,313 @@ class AgGrid {
 
           return this._badgeColumnContainer;
         }
+      },
+      setColumnsId: () => {
+        const keys = Object.keys(this._data.options.columns);
+
+        keys.forEach((key) => {
+          if (!this._data.options.columns[key].staticId) this._data.options.columns[key].staticId = this._utils.random.getRandomId();
+        });
+      }
+    },
+    footerUtils: {
+      buildPaginationFooter: (pData) => {
+        function buildPageButton(pIcon = '', pText = '', pDataPage = '') {
+          let pageButton = document.createElement('div');
+
+          pageButton.className = `ag-page-btn`;
+
+          if (pIcon != '') pageButton.innerHTML = `<span class="fa ${pIcon}"></span>`;
+
+          if (pText != '') pageButton.innerHTML += `<span>${pText}</span>`;
+
+          if (pDataPage != '') pageButton.setAttribute('data-page', pDataPage);
+
+          return pageButton;
+        }
+
+        let fragment = document.createDocumentFragment();
+
+        let paginationFooterContainer = document.createElement('div');
+
+        paginationFooterContainer.className = 'ag-pagination-footer-container';
+
+        let paginationLabelsContainer = document.createElement('div');
+
+        paginationLabelsContainer.className = 'ag-pagination-labels-container';
+
+        paginationLabelsContainer.innerText = `1 - ${pData.options?.paginations?.rows?.pagination} de ${pData.model?.data?.length || 0}`;
+
+        paginationFooterContainer.appendChild(paginationLabelsContainer);
+
+        let paginationPagesContainer = document.createElement('div');
+
+        paginationPagesContainer.className = 'ag-pagination-pages-container';
+
+        let firstPageButton    = buildPageButton('fa-angle-double-left');
+        let previousPageButton = buildPageButton('fa-angle-left');
+
+        firstPageButton.classList.add('ag-first-page-button');
+        firstPageButton.classList.add('ag-u-hidden');
+
+        previousPageButton.classList.add('ag-previous-page-button');
+        previousPageButton.classList.add('ag-u-hidden');
+
+        paginationPagesContainer.appendChild(firstPageButton);
+        paginationPagesContainer.appendChild(previousPageButton);
+
+        let pageButton;
+        let i;
+
+        paginationPagesContainer.innerHTML += '<span class="ag-previous-pages-button-etc ag-u-hidden">...</span>';
+
+        for (i = 1; i <= Math.ceil(this._data.model.data.length / this._data.options.paginations.rows.pagination); i++) {
+           console.log(i)
+           
+            pageButton = buildPageButton('', String(i), i);
+
+            pageButton.classList.add('ag-select-page-button');
+
+            if (i == 1) {
+              pageButton.classList.add('ag-selected-page-button');
+            }
+
+            if (i > 5) {
+              pageButton.classList.add('ag-u-hidden');
+            }
+
+            paginationPagesContainer.appendChild(pageButton);
+        }
+        
+        i--;
+
+        if (i > 5) {
+          paginationPagesContainer.innerHTML += '<span class="ag-next-pages-button-etc">...</span>';
+       
+          let nextPageButton = buildPageButton('fa-angle-right');
+          let lastPageButton = buildPageButton('fa-angle-double-right');
+
+          nextPageButton.classList.add('ag-next-page-button');
+          lastPageButton.classList.add('ag-last-page-button');
+
+          paginationPagesContainer.appendChild(nextPageButton);
+          paginationPagesContainer.appendChild(lastPageButton);
+        }
+
+        paginationFooterContainer.appendChild(paginationPagesContainer);
+
+        fragment.appendChild(paginationFooterContainer);
+
+        return fragment;
+      },
+      addEventsListenersToPaginationButtons: (pStaticId) => {
+        let firstPageButton    = document.querySelector(`#${pStaticId} .ag-first-page-button`);
+        let previousPageButton = document.querySelector(`#${pStaticId} .ag-previous-page-button`);
+
+        let selectPageButtons  = document.querySelectorAll(`#${pStaticId} .ag-select-page-button`);
+
+        let nextPageButton     = document.querySelector(`#${pStaticId} .ag-next-page-button`);
+        let lastPageButton     = document.querySelector(`#${pStaticId} .ag-last-page-button`);
+
+        firstPageButton?.addEventListener('click', () => {
+          this._agBody.rowsContainer.innerHTML = '';
+
+          let offset     = 0;
+          let pagination = this._data.options.paginations.rows.pagination;
+
+          try {
+            this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination-1);
+          } catch (error) {
+            this._utils.message.clearMessages();
+            this._utils.message.showErrorMessage('Falha ao acessar a primeira página da grade');
+
+            console.error(error);
+
+            return;
+          }
+
+          document.querySelectorAll(`#${pStaticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
+            selectPageButton.classList.add('ag-u-hidden');
+          });
+
+          for (let i = offset; i <= pagination -1; i++) {
+            document.querySelectorAll(`#${pStaticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
+          }
+
+          document.querySelector(`#${pStaticId} .ag-selected-page-button`)?.classList.remove('ag-selected-page-button');
+
+          selectPageButtons[0].classList.add('ag-selected-page-button');
+
+          if (selectPageButtons.length > 5) document.querySelector(`#${pStaticId} .ag-next-pages-button-etc.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-first-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-previous-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
+
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-next-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-last-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+        
+          document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`).classList.add('ag-u-hidden');
+
+          this._data.options.paginations.rows.page = 1;
+        
+        });
+
+        previousPageButton?.addEventListener('click', () => {
+          let page = Number(document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
+          
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button[data-page="${page-1}"]`)?.dispatchEvent(new Event('click'));
+        });
+
+        selectPageButtons.forEach((selectPageButton) => {
+          selectPageButton?.addEventListener('click', (event) => {
+            const clickedIndex = Array.from(selectPageButtons).indexOf(event.currentTarget);
+
+            this._agBody.rowsContainer.innerHTML = '';
+
+            let page       = parseInt(event.currentTarget.getAttribute('data-page'));
+            let pagination = this._data.options.paginations.rows.pagination;
+
+            let offset = (page - 1) * pagination;
+
+            try {
+              this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination-1);
+            } catch (error) {
+              this._utils.message.clearMessages();
+              this._utils.message.showErrorMessage('Falha ao acessar página');
+
+              console.error(error);
+            }
+
+            document.querySelectorAll(`#${pStaticId} .ag-selected-page-button`).forEach((selectedPageButton) => {
+              selectedPageButton.classList.remove('ag-selected-page-button');
+            });
+
+            event.currentTarget?.classList.add('ag-selected-page-button');
+
+            let showPreviousAndFirstPageButton = false;
+            let showNextAndLastPageButton      = false;
+
+            // Clicou na primeira página
+            if (selectPageButtons[clickedIndex-2]?.classList.contains('ag-u-hidden')) {
+              selectPageButtons[clickedIndex+3]?.classList.add('ag-u-hidden');
+              selectPageButtons[clickedIndex-2]?.classList.remove('ag-u-hidden');
+
+              showNextAndLastPageButton = true;
+            }
+            
+            // Clicou na segunda página
+            if (selectPageButtons[clickedIndex-1]?.classList.contains('ag-u-hidden')) {
+              selectPageButtons[clickedIndex+4]?.classList.add('ag-u-hidden');
+
+              selectPageButtons[clickedIndex-1]?.classList.remove('ag-u-hidden');
+              selectPageButtons[clickedIndex-2]?.classList.remove('ag-u-hidden');
+
+              showNextAndLastPageButton = true;
+            }
+
+            // Clicou na penultima página
+            if (selectPageButtons[clickedIndex+2]?.classList.contains('ag-u-hidden')) {
+              selectPageButtons[clickedIndex-3]?.classList.add('ag-u-hidden');
+              selectPageButtons[clickedIndex+2]?.classList.remove('ag-u-hidden');
+
+              showPreviousAndFirstPageButton = true;
+            }
+
+            // Clicou na ultima página
+            if (selectPageButtons[clickedIndex+1]?.classList.contains('ag-u-hidden')) {
+              selectPageButtons[clickedIndex-4]?.classList.add('ag-u-hidden');
+
+              selectPageButtons[clickedIndex+1]?.classList.remove('ag-u-hidden');
+              selectPageButtons[clickedIndex+2]?.classList.remove('ag-u-hidden');
+
+              showPreviousAndFirstPageButton = true;
+            }
+
+            if (showPreviousAndFirstPageButton) {
+              previousPageButton?.classList.remove('ag-u-hidden');
+              firstPageButton?.classList.remove('ag-u-hidden');
+
+              document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
+            }
+
+            if (!selectPageButtons[clickedIndex+1] || !selectPageButtons[clickedIndex+2] || !selectPageButtons[clickedIndex+3]) {
+              nextPageButton?.classList.add('ag-u-hidden');
+              lastPageButton?.classList.add('ag-u-hidden');
+
+              document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
+            }         
+
+            if (showNextAndLastPageButton) {
+              nextPageButton?.classList.remove('ag-u-hidden');
+              lastPageButton?.classList.remove('ag-u-hidden');
+
+              document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.remove('ag-u-hidden');
+            }
+
+            if (!selectPageButtons[clickedIndex-1] || !selectPageButtons[clickedIndex-2] || !selectPageButtons[clickedIndex-3]) {
+              previousPageButton?.classList.add('ag-u-hidden');
+              firstPageButton?.classList.add('ag-u-hidden');
+
+              document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.add('ag-u-hidden');
+            }
+
+            this._data.options.paginations.rows.page = Number(event.currentTarget.getAttribute('data-page'));
+          });
+        });
+
+        nextPageButton?.addEventListener('click', () => {
+          let page = Number(document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
+          
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button[data-page="${page+1}"]`)?.dispatchEvent(new Event('click'));
+        });
+
+        lastPageButton?.addEventListener('click', () => {
+          this._agBody.rowsContainer.innerHTML = '';
+
+          let offset     = this._data.model.data.length - this._data.options.paginations.rows.pagination;
+          let pagination = this._data.options.paginations.rows.pagination;
+
+          try {
+            this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination);
+          } catch (error) {
+            this._utils.message.clearMessages();
+            this._utils.message.showErrorMessage('Falha ao acessar a ultima página da grade');
+
+            console.error(error);
+
+            return;
+          }
+
+          document.querySelectorAll(`#${pStaticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
+            selectPageButton.classList.add('ag-u-hidden');
+          });
+
+          let offsetSelectPageButtons = selectPageButtons.length - 5;
+
+          for (let i = offsetSelectPageButtons; i <= selectPageButtons.length; i++) {
+            document.querySelectorAll(`#${pStaticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
+          }
+
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`).classList.remove('ag-selected-page-button');
+
+          selectPageButtons[selectPageButtons.length -1]?.classList.add('ag-selected-page-button');
+
+          document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
+          document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
+
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-first-page-button`)?.classList.remove('ag-u-hidden');
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-previous-page-button`)?.classList.remove('ag-u-hidden');
+          
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-next-page-button`)?.classList.add('ag-u-hidden');
+          document.querySelector(`#${pStaticId} .ag-page-btn.ag-last-page-button`)?.classList.add('ag-u-hidden');
+        
+          this._data.options.paginations.rows.page = selectPageButtons.length;
+        });
+      },
+      setPaginationLabel: (pStaticId, pOffset, pPagination) => {
+        let paginationLabelsContainer = document.querySelector(`#${pStaticId} .ag-pagination-labels-container`);
+
+        if (paginationLabelsContainer) paginationLabelsContainer.innerText = `${pOffset+1} - ${pPagination} de ${this._data.model.data.length || 0}`;
       }
     }
   }
