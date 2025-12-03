@@ -69,7 +69,8 @@ class AgGrid {
       await apex.server.plugin(
         this._ajaxId,
         {
-          pageItems: this.itemsToSubmit
+          pageItems: this.itemsToSubmit,
+          x01: "getData"
         },
         {
           success: (res) => {
@@ -101,7 +102,15 @@ class AgGrid {
       this._data = data;
       // this._data.options.columns.totalLength = Object.values(this._data.options.columns).length;
 
-      if(!this._gridUtils.validateOptions()) {
+      try {
+        if(!this._gridUtils.validateOptions()) {
+          this._gridUtils.noDataFound.create(this.container);
+
+          return;
+        }
+      } catch (err) {
+        console.error(err);
+
         this._gridUtils.noDataFound.create(this.container);
 
         return;
@@ -135,24 +144,26 @@ class AgGrid {
         this._data.options?.paginations?.columns?.pagination-1
       );
 
-      $('.ag-col-resizable').each(function() {
-        const $header  = $(this);
-        const columnId = $header.attr('id');
+      // $('.ag-col-resizable').each(function() {
+      //   const $header  = $(this);
+      //   const columnId = $header.attr('id');
 
-        $header.resizable({
-          handles: 'e',
-          minWidth: 50,
-          start: function() {
-            $(this).css('flex', '0 0 auto');
-          },
-          alsoResize: $(`.ag-cell-container[data-column-header-id="${columnId}"]`),
-          stop: function(event, ui) {
-            const newWidth = ui.size.width;
+      //   $header.resizable({
+      //     handles: 'e',
+      //     minWidth: 50,
+      //     start: function() {
+      //       $(this).css('flex', '0 0 auto');
+      //     },
+      //     alsoResize: $(`.ag-cell-container[data-column-header-id="${columnId}"]`),
+      //     stop: function(event, ui) {
+      //       const newWidth = ui.size.width;
 
-            $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
-          }
-        });
-      });
+      //       $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
+      //     }
+      //   });
+      // });
+
+      this._gridUtils.setResizableColumn();
 
       this._agBody = this.buildAGBody();
 
@@ -161,7 +172,9 @@ class AgGrid {
       if (this._data.model.data.length > 0) {
         this.buildAGBodyRow(this._agBody.rowsContainer, this._data, this._data.options.paginations.rows.offset, this._data.options.paginations.rows.pagination-1);
 
-        this._agBody.bodyFooterContainer.append(this._gridUtils.footerUtils.buildPaginationFooter(this._data));
+        if (this._data.options.paginations.rows.type.toLowerCase() == 'page') {
+          this._agBody.bodyFooterContainer.append(this._gridUtils.footerUtils.buildPaginationFooter(this._data));
+        }
 
         this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(this.staticId);
       } else {
@@ -304,6 +317,10 @@ class AgGrid {
     let columns;
     let columnsPagination = (pColumnsPagination != null) ? pColumnsPagination : this._data.options.paginations.columns.pagination-1;
 
+    let renderedColumns = document.querySelectorAll(`#${ this.staticId } .ag-col-header`);
+
+    if (renderedColumns.length > 0) columnsPagination = renderedColumns.length -1;
+
     let i;
     let rowData;
 
@@ -343,12 +360,14 @@ class AgGrid {
 
     this._data.options.paginations.rows.offset = i;
 
-    if (pData.options.paginations.rows.type) this._gridUtils.footerUtils.setPaginationLabel(this.staticId, pOffset, displayedRowsQty);
+    if (pData.options.paginations.rows.type.toLowerCase() == 'page') this._gridUtils.footerUtils.setPaginationLabel(this.staticId, pOffset, displayedRowsQty);
 
     pContainer.appendChild(fragment);
 
     window.dispatchEvent(new Event('resize'));
   }
+
+  _columnContainer;
 
   _badgeColumnContainer;
   _badgeColumnColor = '#FFFFFF';
@@ -433,6 +452,8 @@ class AgGrid {
       }
     },
     setAutoResize: (pStaticId) => {
+      let columnsWithoutResize;
+
       const autoResize = () => { 
         clearTimeout(this._autoResizeTimer);
 
@@ -442,6 +463,12 @@ class AgGrid {
           for(const columnHeader of columnHeaders) {
             document.querySelectorAll(`#ag-${pStaticId} .ag-cell-container[data-column="${columnHeader.getAttribute('data-column')}"]`).forEach((rowColumn) => {
               rowColumn.style.width = `${columnHeader.getBoundingClientRect().width}px`;
+
+              columnsWithoutResize = [...document.querySelectorAll(`#${pStaticId} .ag-cell-container`)].filter((column) => column.style.flex != '0 0 auto');
+            
+              columnsWithoutResize.forEach((columnWithoutResize) => {
+                columnWithoutResize.style.flex = '0 0 auto';
+              });
             });
           }
         }, 100);       
@@ -547,6 +574,8 @@ class AgGrid {
                 }
               }
             });
+
+            this._gridUtils.setResizableColumn();
           }
         }
       }
@@ -571,7 +600,6 @@ class AgGrid {
             }
 
             this.buildAGBodyRow(this._agBody.rowsContainer, data, offsetRows-1, paginationRows, 0, renderedColumns.length -1);
-            console.log('renderizou vertical');
           }
         }
       }
@@ -596,9 +624,12 @@ class AgGrid {
 
       this._data.options.paginations.rows = this._data.options.paginations.rows || {}
 
-      this._data.options.paginations.rows.type       = this._data.options.paginations.rows.type.toLowerCase() || 'scroll';
-      this._data.options.paginations.rows.offset     = this._data.options.paginations.rows.offset             || 0;
-      this._data.options.paginations.rows.pagination = this._data.options.paginations.rows.pagination         || 50;
+      this._data.options.paginations.rows.type       = String(this._data.options.paginations.rows.type || 'scroll').toLocaleLowerCase();
+      
+      this._data.options.paginations.rows.offset     = this._data.options.paginations.rows.offset                     || 0;
+      this._data.options.paginations.rows.pagination = this._data.options.paginations.rows.pagination                 || 50;
+
+      if (this._data.options.paginations.rows.type == 'scroll') this._data.options.paginations.rows.pagination = 50;
 
       if (!['scroll', 'page'].includes(this._data.options.paginations.rows.type.toLowerCase())) throw new Error('Tipo de paginação por linhas incorreto');
 
@@ -672,6 +703,9 @@ class AgGrid {
         this._rowColumnContainer.className    = 'ag-cell-container';
 
         this._rowColumnContainer.style.textAlign = this._columnOption.alignment.toLowerCase() || 'start';
+
+        // if (String(pRowColumnData.custom?.displayType).toLowerCase() == 'link') this._rowColumnContainer.style.textAlign = 'center';
+
         this._rowColumnContainer.style.width     = this._columnDOMConfig[pColumnName].width;
         // rowColumnContainer.style.width     = document.getElementById(columnOption.staticId).getBoundingClientRect().width;
         this._rowColumnContainer.style.height    = this._columnDOMConfig[pColumnName].height;
@@ -705,6 +739,18 @@ class AgGrid {
 
               if (document.getElementById(this._columnOption.staticId)) document.getElementById(this._columnOption.staticId).style.minWidth = '120px';             
             }
+          } else if (this._customColumnData.displayType == 'LINK') {
+            this._rowColumnContainer.appendChild(
+              this._gridUtils.columnUtils.cellUtils.buildLinkCell({
+                "staticId"      : this.staticId,
+                "application"   : this._customColumnData.application || apex.item('pFlowId').getValue(),
+                "page"          : this._customColumnData.page        || apex.item('pFlowStepId').getValue(), 
+                "items"         : this._customColumnData.items,
+                "values"        : this._customColumnData.values,
+                "cellValue"     : this._utils.escapeHtml(pRowColumnData.value),
+                "icon"          : this._customColumnData.icon
+              })
+            );
           }
         }
         else {
@@ -716,6 +762,42 @@ class AgGrid {
       cellUtils: {
         buildCell: () => {
 
+        },
+        buildLinkCell: (pConfig) => {
+          this._columnContainer = document.createElement('div');
+
+          this._columnContainer.className = 'ag-link-column-container';
+
+          if (pConfig.icon) this._columnContainer.innerHTML = `<span class="fa ${pConfig.icon}" style="font-size: 20px !important;"></span>`;
+
+          this._columnContainer.innerHTML += `<span>${pConfig.cellValue}</span>`;
+
+          this._columnContainer.addEventListener('click', async (event) => {
+            let dataUrl;
+
+            try {
+              dataUrl = await this._gridUtils.makeLinkURLRequest(
+                pConfig.application, 
+                pConfig.page, 
+                String(pConfig.items).replaceAll(' ', ''),
+                pConfig.values 
+              );
+
+              if (dataUrl && typeof dataUrl == 'string' && dataUrl.trim() !== '') {
+                apex.navigation.redirect(dataUrl);
+              } else {
+                this._utils.message.clearMessages();
+                this._utils.message.showErrorMessage('O link gerado é inválido ou vazio.');
+              }
+            } catch (err) {
+              this._utils.message.clearMessages();
+              this._utils.message.showErrorMessage('Houve um erro ao gerar link. Tente novamente');
+
+              console.error('Erro ao gerar link:', err);
+            }
+          });
+
+          return this._columnContainer;
         },
         buildBadgeCell: (pValue, pBadgeColor = '#9500BA', pFontColor = "#FFFFFF", pType = 1) => {
           this._badgeColumnContainer = document.createElement('div');
@@ -803,22 +885,20 @@ class AgGrid {
 
         paginationPagesContainer.innerHTML += '<span class="ag-previous-pages-button-etc ag-u-hidden">...</span>';
 
-        for (i = 1; i <= Math.ceil(this._data.model.data.length / this._data.options.paginations.rows.pagination); i++) {
-           console.log(i)
-           
-            pageButton = buildPageButton('', String(i), i);
+        for (i = 1; i <= Math.ceil(this._data.model.data.length / this._data.options.paginations.rows.pagination); i++) {      
+          pageButton = buildPageButton('', String(i), i);
 
-            pageButton.classList.add('ag-select-page-button');
+          pageButton.classList.add('ag-select-page-button');
 
-            if (i == 1) {
-              pageButton.classList.add('ag-selected-page-button');
-            }
+          if (i == 1) {
+            pageButton.classList.add('ag-selected-page-button');
+          }
 
-            if (i > 5) {
-              pageButton.classList.add('ag-u-hidden');
-            }
+          if (i > 5) {
+            pageButton.classList.add('ag-u-hidden');
+          }
 
-            paginationPagesContainer.appendChild(pageButton);
+          paginationPagesContainer.appendChild(pageButton);
         }
         
         i--;
@@ -843,6 +923,8 @@ class AgGrid {
         return fragment;
       },
       addEventsListenersToPaginationButtons: (pStaticId) => {
+        let renderedColumns;
+
         let firstPageButton    = document.querySelector(`#${pStaticId} .ag-first-page-button`);
         let previousPageButton = document.querySelector(`#${pStaticId} .ag-previous-page-button`);
 
@@ -903,6 +985,8 @@ class AgGrid {
         selectPageButtons.forEach((selectPageButton) => {
           selectPageButton?.addEventListener('click', (event) => {
             const clickedIndex = Array.from(selectPageButtons).indexOf(event.currentTarget);
+
+            renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`)
 
             this._agBody.rowsContainer.innerHTML = '';
 
@@ -994,6 +1078,9 @@ class AgGrid {
             }
 
             this._data.options.paginations.rows.page = Number(event.currentTarget.getAttribute('data-page'));
+
+            this._gridUtils.setAutoResize(pStaticId);
+            this._utils.event.triggerWindowResize();
           });
         });
 
@@ -1051,6 +1138,60 @@ class AgGrid {
 
         if (paginationLabelsContainer) paginationLabelsContainer.innerText = `${pOffset+1} - ${pPagination} de ${this._data.model.data.length || 0}`;
       }
+    },
+    makeLinkURLRequest: async (pApplication = apex.item('pFlowId').getValue(), pPage = apex.item('pFlowStepId').getValue(), pItems = '', pValues = '') => {
+      const jsonValue = {
+        "application"  : pApplication,
+        "page"         : pPage,
+        "items"        : pItems,
+        "values"       : pValues
+      };
+
+      return new Promise((resolve, reject) => {
+         apex.server.plugin(
+          this._ajaxId,
+          {
+            x01: 'getLink',
+            x02: JSON.stringify(jsonValue)
+          },
+          {
+            success: (res) => {
+              resolve(res.data);
+            },
+            error: (err) => {
+              console.error(err);
+
+              this._utils.message.clearMessages();
+
+              this._utils.message.showErrorMessage();
+
+              if (err.responseText) this._utils.message.showErrorMessage(`Erro ao consultar JSON: \n ${err.responseText}`);
+           
+              reject(err);
+            }
+          }
+        );
+      });
+    },
+    setResizableColumn: () => {
+      $('.ag-col-resizable').each(function() {
+        const $header  = $(this);
+        const columnId = $header.attr('id');
+
+        $header.resizable({
+          handles: 'e',
+          minWidth: 50,
+          start: function() {
+            $(this).css('flex', '0 0 auto');
+          },
+          alsoResize: $(`.ag-cell-container[data-column-header-id="${columnId}"]`),
+          stop: function(event, ui) {
+            const newWidth = ui.size.width;
+
+            $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
+          }
+        });
+      });
     }
   }
 }
@@ -1145,5 +1286,11 @@ class Utils {
     getTemplateColor: (pTemplateType) => {
       return this._templateColorType[String(pTemplateType).toUpperCase()];
     }
-  }
+  };
+  
+  event = {
+    triggerWindowResize: () => {
+      window.dispatchEvent(new Event('resize'));
+    }
+  };
 }

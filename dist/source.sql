@@ -58,25 +58,49 @@ procedure P_AJAX( p_plugin in            apex_plugin.t_plugin
 
   v_data_provider_type           p_plugin.attribute_01%type := p_plugin.attribute_01;
   v_function_returning_clob_json varchar2(4000)             := p_region.attributes.get_varchar2('ag_dpt_json');
+
+  vv_callback_type               varchar2(100)              := apex_application.g_x01;
  
   vc_data_provider_statement clob;
   vc_json_return             clob;
   
 begin
-
-  vc_json_return := apex_plugin_util.get_plsql_func_result_clob( p_plsql_function            => v_function_returning_clob_json);
-
-  -- apex_plugin_util.execute_plsql_code(vc_data_provider_statement);
-
-  apex_json.initialize_output;
-
-  apex_json.open_object;
+  if vv_callback_type = 'getData' then
+    vc_json_return := apex_plugin_util.get_plsql_func_result_clob( p_plsql_function            => v_function_returning_clob_json);
   
-  apex_json.write('data', vc_json_return);
-  apex_json.write('message', 'JSON data fetched successfully');
-  apex_json.write('success', true);
+    -- apex_plugin_util.execute_plsql_code(vc_data_provider_statement);
+  
+    apex_json.initialize_output;
+  
+    apex_json.open_object;
+    
+    apex_json.write('data', vc_json_return);
+    apex_json.write('message', 'JSON data fetched successfully');
+    apex_json.write('success', true);
+  
+    apex_json.close_object;
+  elsif vv_callback_type = 'getLink' then
+    declare
+      v_json json_object_t;
 
-  apex_json.close_object;
+      vc_values clob;
+    begin
+      v_json := json_object_t.parse(apex_application.g_x02);
+
+      apex_json.open_object;
+
+      apex_json.write('data', apex_page.get_url( p_application        => v_json.get_number('application')
+                                               , p_page               => v_json.get_number('page')
+                                               , p_clear_cache        => v_json.get_number('page')
+                                               , p_items              => v_json.get_string('items')
+                                               , p_values             => v_json.get_string('values')
+                                               , p_triggering_element => '$("#' || p_region.static_id || '")'));
+      apex_json.write('message', 'Link URL created as successfully');
+      apex_json.write('success', true);
+
+      apex_json.close_object;
+    end;
+  end if;
 
   p_result := null;
 exception when others then

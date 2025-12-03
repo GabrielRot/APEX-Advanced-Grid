@@ -146,6 +146,19 @@
       border-right-color: @default-border-color;
     }
 
+    .ag-link-column-container {
+      cursor: pointer;
+      color: #1473CB;
+
+      span:nth-of-type(even) {
+        margin-left: 4px;
+      }
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
     &:extend(.ag-col-header);
   }
 }
