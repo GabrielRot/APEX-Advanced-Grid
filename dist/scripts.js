@@ -66,27 +66,35 @@ class AgGrid {
 
       console.log('calling request');
 
-      await apex.server.plugin(
-        this._ajaxId,
-        {
-          pageItems: this.itemsToSubmit,
-          x01: "getData"
-        },
-        {
-          success: (res) => {
-            console.log(JSON.parse(res.data));
+      try {
+        this.container.innerHTML = '<div class="ag-loading-container" style="widht: 300px; height: 300px;"></div>'
 
-            responseData = res.data;
+        apex.util.showSpinner(`#${this.staticId} .ag-loading-container`);
+
+        await apex.server.plugin(
+          this._ajaxId,
+          {
+            pageItems: this.itemsToSubmit,
+            x01: "getData"
           },
-          error: (err) => {
-            console.error(err);
-            
-            this._utils.message.clearMessages();
+          {
+            success: (res) => {
+              console.log(JSON.parse(res.data));
 
-            if (err.responseText) this._utils.message.showErrorMessage(`Erro ao consultar JSON: \n ${err.responseText}`);
+              responseData = res.data;
+            },
+            error: (err) => {
+              console.error(err);
+              
+              this._utils.message.clearMessages();
+
+              if (err.responseText) this._utils.message.showErrorMessage(`Erro ao consultar JSON: \n ${err.responseText}`);
+            }
           }
-        }
-      );
+        );
+      } finally {
+        this.container.innerHTML = '';
+      }
 
       console.log('request called');
 
@@ -129,7 +137,7 @@ class AgGrid {
       //   }
       // }
 
-      this.buildAGToolbar(this.container);
+      // this.buildAGToolbar(this.container);
 
       this._agHeader = this.buildAGHeaderContainer();
 
@@ -716,9 +724,9 @@ class AgGrid {
         if (pRowColumnData.custom) {
           this._customColumnData = pRowColumnData.custom;
 
-          if (this._customColumnData.displayType == "BADGE") {
+          if (String(this._customColumnData.displayType).toLowerCase() == "badge") {
             if (pRowColumnData.value) {
-              if (["DANGER", "WARNING", "SUCCESS", "INFO"].includes(this._customColumnData.badgeColor.toUpperCase())) {
+              if (["danger", "warning", "success", "info"].includes(String(this._customColumnData.badgeColor).toLowerCase())) {
                 this._badgeColor = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.color;
                 this._fontColor  = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.fontColor;
               } else {
