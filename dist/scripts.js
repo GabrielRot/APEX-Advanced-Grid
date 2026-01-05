@@ -6,7 +6,9 @@ class AgGrid {
 
   _utils;
 
+  _agHeaderWrapper;
   _agHeader;
+
   _agBody;
 
   _data;
@@ -102,7 +104,7 @@ class AgGrid {
   }
 
   buildAG(pData) {
-    console.time('buildAG');
+    console.time('buildAG', pData);
 
     let data = this._utils.json.parseSafe(pData);
 
@@ -139,9 +141,13 @@ class AgGrid {
 
       // this.buildAGToolbar(this.container);
 
+      this._agHeaderWrapper = this.buildAGHeaderWrapper();
+
       this._agHeader = this.buildAGHeaderContainer();
 
-      this.container.appendChild(this._agHeader);
+      this._agHeaderWrapper.appendChild(this._agHeader);
+
+      this.container.appendChild(this._agHeaderWrapper);
 
       this._gridUtils.columnUtils.setColumnsId();
 
@@ -152,30 +158,12 @@ class AgGrid {
         this._data.options?.paginations?.columns?.pagination-1
       );
 
-      // $('.ag-col-resizable').each(function() {
-      //   const $header  = $(this);
-      //   const columnId = $header.attr('id');
-
-      //   $header.resizable({
-      //     handles: 'e',
-      //     minWidth: 50,
-      //     start: function() {
-      //       $(this).css('flex', '0 0 auto');
-      //     },
-      //     alsoResize: $(`.ag-cell-container[data-column-header-id="${columnId}"]`),
-      //     stop: function(event, ui) {
-      //       const newWidth = ui.size.width;
-
-      //       $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
-      //     }
-      //   });
-      // });
-
-      this._gridUtils.setResizableColumn();
+      this._gridUtils.setResizableColumn(this.staticId);
 
       this._agBody = this.buildAGBody();
 
-      this.container.appendChild(this._agBody.bodyContainer);
+      this.container.appendChild(this._agBody.bodyWrapper);
+      this.container.appendChild(this._agBody.bodyFooterContainer);
 
       if (this._data.model.data.length > 0) {
         this.buildAGBodyRow(this._agBody.rowsContainer, this._data, this._data.options.paginations.rows.offset, this._data.options.paginations.rows.pagination-1);
@@ -195,7 +183,13 @@ class AgGrid {
 
       this._gridUtils.setAutoResize(this.staticId);
 
+      this._gridUtils.columnUtils.headerUtils.applyStickyTop(this.staticId);
+
+      this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(this.staticId);
+
       // this._gridUtils.columnUtils.headerUtils.setStickyHeader(this.staticId);
+
+      // this._gridUtils.columnUtils.headerUtils.setColumnPopupOptions(this.staticId);
 
     } else {
       this._gridUtils.noDataFound.create(this.container);
@@ -236,6 +230,14 @@ class AgGrid {
     // });
   }
 
+  buildAGHeaderWrapper() {
+    let headerWrapper = document.createElement('div');
+
+    headerWrapper.className = 'ag-header-wrapper';
+
+    return headerWrapper;
+  }
+
   buildAGHeaderContainer() {
     let headerContainer = document.createElement('div');
 
@@ -259,16 +261,21 @@ class AgGrid {
 
       if (columnOption) {    
         // if (!columnOption.staticId) columnOption.staticId = this._utils.random.getRandomId();
-
         let columnHeader = document.createElement('div');
 
         columnHeader.className = 'ag-col-header ag-col-resizable ag-u-flex';
+
+        if (columnOption.frozen) columnHeader.classList.add('ag-frozen-column');
 
         columnHeader.id = `${columnOption.staticId}`;
 
         columnHeader.setAttribute('data-column', `${this._utils.escapeHtml(columnsKeys[i])}`);
 
-        if (columnOption.width) columnHeader.style.width = `${columnOption.width}px`;
+        if (columnOption.width){
+            columnHeader.style.width = `${columnOption.width}px`;
+            columnHeader.style.minWidth = `${columnOption.width}px`;
+            columnHeader.style.flex = `0 0 ${columnOption.width}px`;
+        } 
 
         let tradeColumnSequence = document.createElement('div');
 
@@ -278,7 +285,7 @@ class AgGrid {
 
         columnHeaderValue.style.textAlign = columnOption.alignment.toLowerCase() || 'start';
 
-        columnHeaderValue.innerText = this._utils.escapeHtml(columnOption.header);
+        columnHeaderValue.innerHTML = columnOption.header;
 
         columnHeader.appendChild(tradeColumnSequence);
 
@@ -296,6 +303,10 @@ class AgGrid {
   }
 
   buildAGBody() {
+    let bodyWrapper = document.createElement('div');
+
+    bodyWrapper.className = 'ag-body-wrapper';
+    
     let bodyContainer = document.createElement('div');
 
     bodyContainer.className = 'ag-body-container';
@@ -309,9 +320,11 @@ class AgGrid {
     bodyFooterContainer.className = 'ag-body-footer-container';
 
     bodyContainer.appendChild(rowsContainer);
-    bodyContainer.appendChild(bodyFooterContainer);
+
+    bodyWrapper.appendChild(bodyContainer);
 
     return {
+      "bodyWrapper": bodyWrapper,
       "bodyContainer": bodyContainer,
       "rowsContainer": rowsContainer,
       "bodyFooterContainer": bodyFooterContainer
@@ -397,6 +410,9 @@ class AgGrid {
   _badgeColor;
   _fontColor;
 
+  _setHeaderContainerPositionAndPagination;
+  _scrollLinesPagination;
+
 
   _gridUtils = {
     validateOptions: () => {
@@ -419,6 +435,8 @@ class AgGrid {
           header:    column.header    ?? key,
           alignment: column.alignment ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
           type:      column.type      ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
+          width:     column.width     ?? key,
+          frozen:    column.frozen    ?? false
         };
       });
 
@@ -504,7 +522,7 @@ class AgGrid {
 
           try {
             this.container.innerHTML = '';
-
+            
             this.buildAG(data);
           } catch (e) {
             this._utils.message.clearMessages();
@@ -523,10 +541,12 @@ class AgGrid {
       }
     },
     addScrollGrid: (pStaticId) => {
-      const scroller        = document.querySelector(`#${pStaticId} .ag-rows-container`);
+      const headerWrapper   = document.querySelector(`#${pStaticId} .ag-header-wrapper`);
       const columnContainer = document.querySelector(`#${pStaticId} .ag-col-header-container`);
+      const scroller        = document.querySelector(`#${pStaticId} .ag-body-wrapper`);
       
       let data            = this._data;
+      
       let columnOptions   = data.options?.columns;
       let paginations     = data.options?.paginations;
       let columnsLength   = Object.values(columnOptions).length;
@@ -548,8 +568,10 @@ class AgGrid {
 
       let renderedRows;
 
-      const setHeaderContainerPositionAndPagination = () => {
-        columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
+      this._setHeaderContainerPositionAndPagination = () => {
+        // columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
+
+          headerWrapper.scrollLeft = scroller.scrollLeft;
         
         if ((scroller.scrollLeft + scroller.clientWidth)+2 >= scroller.scrollWidth) {
           renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
@@ -583,12 +605,17 @@ class AgGrid {
               }
             });
 
-            this._gridUtils.setResizableColumn();
+            this._gridUtils.setResizableColumn(pStaticId);
           }
         }
+
+        this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(this.staticId);
       }
 
-      const scrollLinesPagination = () => {
+      document.removeEventListener('scroll', this._scrollLinesPagination);
+
+
+      this._scrollLinesPagination = () => {
         if ((document.documentElement.scrollTop + document.documentElement.clientHeight)+10 >= document.documentElement.scrollHeight) {
           renderedRows    = document.querySelectorAll(`#${pStaticId} .ag-row-container`);
           renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
@@ -610,14 +637,15 @@ class AgGrid {
             this.buildAGBodyRow(this._agBody.rowsContainer, data, offsetRows-1, paginationRows, 0, renderedColumns.length -1);
           }
         }
+
+        this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(this.staticId);
       }
 
-      scroller.removeEventListener('scroll', setHeaderContainerPositionAndPagination);
-      scroller.addEventListener('scroll', setHeaderContainerPositionAndPagination);
-
+      scroller.removeEventListener('scroll', this._setHeaderContainerPositionAndPagination);
+      scroller.addEventListener('scroll', this._setHeaderContainerPositionAndPagination);
+      
       if (String(this._data.options.paginations.rows.type).toLowerCase() == 'scroll' || !this._data.options.paginations.rows) {
-        document.removeEventListener('scroll', scrollLinesPagination);
-        document.addEventListener('scroll', scrollLinesPagination);
+        document.addEventListener('scroll', this._scrollLinesPagination);
       }
     },
     validatePagination: () => {
@@ -683,6 +711,18 @@ class AgGrid {
           this._columnHeaderOrderByContainer.appendChild(this._orderByDescButton);
 
           return this._columnHeaderOrderBy;
+        },
+        setColumnPopupOptions: (pStaticId) => {
+          document.querySelectorAll(`#${pStaticId} .ag-col-header`).forEach((columnHeader) => {
+            this._utils.popup.calloutPopup(columnHeader);
+          });
+        },
+        applyStickyTop: (pStaticId) => {
+          let navbarHeight = document.querySelector('.t-Header-branding').offsetHeight;
+
+          if (navbarHeight) {
+            document.querySelector(`#${pStaticId} .ag-header-wrapper`).style.top = `${navbarHeight}px`;
+          }
         }
       },
       buildRowColumn: (pRowColumnData, pColumnsOptions, pColumnName) => {
@@ -700,8 +740,13 @@ class AgGrid {
         }
 
         if (!this._columnDOMConfig[pColumnName]) {
+          let definedWidth = this._columnOption.width;
+          let headerElement = document.getElementById(this._columnOption.staticId);
+          let finalWidth = definedWidth ? `${definedWidth}px` : (headerElement ? `${headerElement.getBoundingClientRect().width}px` : 'auto');
+
           this._columnDOMConfig[pColumnName] = {
-            "width": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().width}px`,
+            "width": finalWidth,
+            // "width": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().width}px`,
             "height": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().height}px`,
           }
         }
@@ -710,11 +755,18 @@ class AgGrid {
         
         this._rowColumnContainer.className    = 'ag-cell-container';
 
+        if (this._columnOption.frozen) this._rowColumnContainer.classList.add('ag-frozen-column');
+
         this._rowColumnContainer.style.textAlign = this._columnOption.alignment.toLowerCase() || 'start';
 
         // if (String(pRowColumnData.custom?.displayType).toLowerCase() == 'link') this._rowColumnContainer.style.textAlign = 'center';
 
         this._rowColumnContainer.style.width     = this._columnDOMConfig[pColumnName].width;
+
+        if (this._columnOption.width) {
+            this._rowColumnContainer.style.minWidth = this._columnDOMConfig[pColumnName].width;
+            this._rowColumnContainer.style.flex = `0 0 ${this._columnDOMConfig[pColumnName].width}`;
+        }
         // rowColumnContainer.style.width     = document.getElementById(columnOption.staticId).getBoundingClientRect().width;
         this._rowColumnContainer.style.height    = this._columnDOMConfig[pColumnName].height;
 
@@ -762,7 +814,7 @@ class AgGrid {
           }
         }
         else {
-          this._rowColumnContainer.innerText = this._utils.escapeHtml(pRowColumnData.value);
+          this._rowColumnContainer.innerHTML = this._utils.escapeHtml(pRowColumnData.value);
         }
 
         return this._rowColumnContainer;
@@ -827,7 +879,7 @@ class AgGrid {
           this._badgeColumn.style.backgroundColor = this._badgeColumnColor;
           this._badgeColumn.style.color           = (pType != 2) ? pFontColor : pBadgeColor;
 
-          this._badgeColumn.innerText = pValue;
+          this._badgeColumn.innerHTML = pValue;
 
           this._badgeColumnContainer.appendChild(this._badgeColumn);
 
@@ -840,6 +892,94 @@ class AgGrid {
         keys.forEach((key) => {
           if (!this._data.options.columns[key].staticId) this._data.options.columns[key].staticId = this._utils.random.getRandomId();
         });
+      },
+      frozenColumn: {
+        configurateFrozenColumns: (pStaticId) => {
+          this._gridUtils.columnUtils.frozenColumn.validateAllFrozenColumn(pStaticId);
+          this._gridUtils.columnUtils.frozenColumn.setLastFrozenColumnClass(pStaticId);
+          this._gridUtils.columnUtils.frozenColumn.applyStickyLeft(pStaticId);
+        },
+        setLastFrozenColumnClass: (pStaticId) => {
+          let agFrozenColumnHeaders = document.querySelectorAll(`#${pStaticId} .ag-col-header.ag-frozen-column`);
+          let agFrozenColumns;
+
+          if ((agFrozenColumnHeaders.length -1) >= 0) {
+            agFrozenColumnHeaders[agFrozenColumnHeaders.length-1].classList.add('ag-frozen-column-last');
+          };
+
+        document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((rowContainer) => {
+            agFrozenColumns = rowContainer.querySelectorAll('.ag-cell-container.ag-frozen-column');
+
+            if ((agFrozenColumns.length -1) >= 0) {
+              agFrozenColumns[agFrozenColumns.length-1].classList.add('ag-frozen-column-last');
+            }
+          });
+        },
+        applyStickyLeft: (pStaticId) => {
+          let firstAGRowFrozenColumnContainer = document.querySelector(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`);
+
+          if (!firstAGRowFrozenColumnContainer) return;
+
+          const frozenColumns = [...firstAGRowFrozenColumnContainer.querySelectorAll('.ag-cell-container.ag-frozen-column')];
+
+          let frozenColumnLeftCSSValue = 0;
+          let frozenColumnWidth;
+          let frozenColumnIndex;
+          let column;
+          let columnHeader;
+
+          frozenColumns.forEach((frozenColumn, i) => {
+            frozenColumnWidth = frozenColumn.offsetWidth;
+
+            frozenColumnIndex = [...frozenColumn.parentNode.children].indexOf(frozenColumn);
+
+            document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((agRowContainer) => {
+              column = agRowContainer.children[frozenColumnIndex];
+
+              if (!column) return;
+
+              column.style.left = `${frozenColumnLeftCSSValue}px`;
+              column.style.zIndex = 10 - frozenColumnIndex;
+
+              columnHeader = document.querySelector(`#${pStaticId} .ag-col-header-container:has(.ag-frozen-column)`).children[frozenColumnIndex];
+
+              if (!columnHeader) return;
+
+              columnHeader.style.left   = `${frozenColumnLeftCSSValue}px`;
+              columnHeader.style.zIndex = 10 - frozenColumnIndex; 
+            });
+
+            frozenColumnLeftCSSValue += frozenColumnWidth;
+          });
+        },
+        validateAllFrozenColumn: (pStaticId) => {
+          let agRowsFrozenColumnContainer = document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`);
+
+          if (!agRowsFrozenColumnContainer) return;
+
+          let agCellContainers;
+          let i;
+
+          const agFrozenColumn = agRowsFrozenColumnContainer[0].querySelectorAll('.ag-cell-container.ag-frozen-column');
+
+          const lastAGFrozenColumnIndex = [...agRowsFrozenColumnContainer[0].querySelectorAll('.ag-cell-container')].indexOf(
+            agFrozenColumn[agFrozenColumn.length-1]
+          );
+
+          let columnHeaders = document.querySelectorAll(`#${pStaticId} .ag-col-header-container .ag-col-header`);
+
+          for(i = 0; i <= lastAGFrozenColumnIndex; i++) {
+            columnHeaders[i].classList.add('ag-frozen-column');
+          }
+
+          agRowsFrozenColumnContainer.forEach((agRowFrozenColumnContainer) => {
+            agCellContainers = agRowFrozenColumnContainer.querySelectorAll('.ag-cell-container');
+
+            for(i = 0; i <= lastAGFrozenColumnIndex; i++) {
+              agCellContainers[i].classList.add('ag-frozen-column');
+            }
+          });
+        }
       }
     },
     footerUtils: {
@@ -981,6 +1121,8 @@ class AgGrid {
           document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`).classList.add('ag-u-hidden');
 
           this._data.options.paginations.rows.page = 1;
+
+          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
         
         });
 
@@ -1089,6 +1231,8 @@ class AgGrid {
 
             this._gridUtils.setAutoResize(pStaticId);
             this._utils.event.triggerWindowResize();
+
+            this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
           });
         });
 
@@ -1139,6 +1283,8 @@ class AgGrid {
           document.querySelector(`#${pStaticId} .ag-page-btn.ag-last-page-button`)?.classList.add('ag-u-hidden');
         
           this._data.options.paginations.rows.page = selectPageButtons.length;
+
+          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
         });
       },
       setPaginationLabel: (pStaticId, pOffset, pPagination) => {
@@ -1181,7 +1327,9 @@ class AgGrid {
         );
       });
     },
-    setResizableColumn: () => {
+    setResizableColumn: (pStaticId) => {
+      const applyStickLeft = this._gridUtils.columnUtils.frozenColumn.applyStickyLeft;
+
       $('.ag-col-resizable').each(function() {
         const $header  = $(this);
         const columnId = $header.attr('id');
@@ -1197,6 +1345,8 @@ class AgGrid {
             const newWidth = ui.size.width;
 
             $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
+
+            applyStickLeft(pStaticId);
           }
         });
       });
@@ -1248,6 +1398,54 @@ class Utils {
       );
     }
   };
+
+  popup = {
+    /**
+    *  @Param pElement: { HTMLElement } 
+    *  @Param pContent: { HTMLElement }
+    */
+    calloutPopup: (pElement, pContent) => {
+      function createPopupframe () {
+        let elementId = pElement.getAttribute('id');
+
+        if (!document.querySelector(`.ag-popup-frame-container[data-column-header-id="${elementId}"]`)) {
+          let elementBoundingClientRect = pElement.getBoundingClientRect();
+          let popupFrame = document.createElement('div');
+        
+          popupFrame.className = 'ag-popup-frame-container';
+        
+          popupFrame.setAttribute('data-column-header-id', elementId);
+
+          if (pContent) popupFrame.innerHTML = pContent;
+        
+          popupFrame.style.top  = `${elementBoundingClientRect.bottom + window.scrollY + 8}px`;
+          popupFrame.style.left = `${elementBoundingClientRect.left   + window.scrollX}px`;
+
+          let popupOverlay = document.createElement('div');
+
+          popupOverlay.className = 'ag-popup-overlay';
+
+          document.querySelector('body').appendChild(popupOverlay);
+
+          function removePopupOverlay() {
+            popupFrame.style.opacity = '0 !important';
+            
+            popupOverlay.removeEventListener('click', removePopupOverlay);
+            popupOverlay.remove();
+          }
+
+          popupOverlay.addEventListener('click', removePopupOverlay);
+
+          document.querySelector('body').appendChild(popupFrame);
+        }
+      }
+
+      if (!pElement) return;
+      
+      pElement.removeEventListener('click', createPopupframe);
+      pElement.addEventListener('click', createPopupframe);
+    }
+  }
 
   json = 
   {
