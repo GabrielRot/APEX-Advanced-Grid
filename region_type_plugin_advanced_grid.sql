@@ -33,7 +33,7 @@ prompt APPLICATION 40010 - Principal
 -- Application Export:
 --   Application:     40010
 --   Name:            Principal
---   Date and Time:   13:20 Thursday January 15, 2026
+--   Date and Time:   17:07 Tuesday January 20, 2026
 --   Exported By:     GABRIELTEIXEIRA
 --   Flashback:       0
 --   Export Type:     Component Export
@@ -49,7 +49,7 @@ begin
   wwv_flow_imp.g_mode := 'REPLACE';
 end;
 /
-prompt --application/shared_components/plugins/region_type/advanced_grid
+prompt --application/shared_components/plugins/region_type/cs_advanced_grid
 begin
 wwv_flow_imp_shared.create_plugin(
  p_id=>wwv_flow_imp.id(24925583794251800617)
