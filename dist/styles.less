@@ -1,6 +1,6 @@
 @primary-bg-color: #FFFFFF;
 
-@default-border-color: #EDEDED;
+@default-border-color: #E3E3E3;
 @default-border-width: 1px;
 
 @ag-slim-cell-font-size: 12px;
@@ -181,7 +181,20 @@
 }
 
 .ag-body-wrapper {
-  overflow-x: auto;
+  // overflow-x: auto;
+  overflow-x: hidden;
+}
+
+.ag-stripe-rows {
+  .ag-row-container:nth-of-type(even) {
+    @ag-striped-bg-color: #F9F9F9;
+
+    background-color: @ag-striped-bg-color;
+
+    .ag-cell-container {
+      background-color: @ag-striped-bg-color;
+    }
+  }
 }
 
 .ag-row-container {
@@ -197,7 +210,15 @@
     background-color: @primary-bg-color;
 
     font-weight: unset !important;
-    color: #201F24 !important;
+
+    &:not(.ag-read-only-column) {
+      color: #201F24 !important;
+    }
+
+    &.ag-read-only-column {
+      background-color: #F5F9FC !important;
+      color: rgba(0, 0, 0, 0.65) !important;
+    }
   
     &:not(:last-of-type) {
       border-right-style: solid;
@@ -368,6 +389,25 @@
   }
 }
 
+.ag-footer-wrapper {
+  overflow-y: hidden;
+  overflow-x: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 100;
+
+ .ag-footer-scroll {
+  height: 1px;
+ }
+
+ .ag-body-footer-container {
+  background-color: @primary-bg-color;
+  overflow: hidden;
+  position: sticky;
+  left: 0;
+ }
+}
+
 .ag-pagination-footer-container {
   display: flex;
   align-items: center;
@@ -505,6 +545,7 @@
 .ag-frozen-column {
   // z-index: 100;
   position: sticky !important;
+  // left: 0;
 
   &.ag-frozen-column-last {
     border-right-width: 4px !important;

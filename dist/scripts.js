@@ -152,8 +152,10 @@ class AgGrid {
 
       this._agBody = this.buildAGBody();
 
+      if (data.options?.rows?.enableZebraStriping) this._agBody.rowsContainer.classList.add('ag-stripe-rows');
+
       this.container.appendChild(this._agBody.bodyWrapper);
-      this.container.appendChild(this._agBody.bodyFooterContainer);
+      this.container.appendChild(this._agBody.footerWrapper);
 
       if (this._data.model.data.length > 0) {
         this.buildAGBodyRow(this._agBody.rowsContainer, this._data, this._data.options.paginations.rows.offset, this._data.options.paginations.rows.pagination-1);
@@ -191,8 +193,6 @@ class AgGrid {
   }
 
   buildAGToolbar(pStaticId, pStyle = 'ag-slim') {
-    console.log(pStyle);
-
     let toolbarContainer = document.createElement('div');
 
     toolbarContainer.className = `ag-toolbar-container ${pStyle}`;
@@ -210,6 +210,7 @@ class AgGrid {
 
   buildAGHeaderWrapper() {
     let headerWrapper = document.createElement('div');
+
     headerWrapper.className = 'ag-header-wrapper';
 
     return headerWrapper;
@@ -292,6 +293,14 @@ class AgGrid {
 
     rowsContainer.className = 'ag-rows-container';
 
+    let footerWrapper = document.createElement('div');
+
+    footerWrapper.className = 'ag-footer-wrapper';
+
+    let footerScroll  = document.createElement('div');
+
+    footerScroll.className = 'ag-footer-scroll';
+
     let bodyFooterContainer = document.createElement('div');
 
     bodyFooterContainer.className = 'ag-body-footer-container';
@@ -300,10 +309,16 @@ class AgGrid {
 
     bodyWrapper.appendChild(bodyContainer);
 
+    footerWrapper.appendChild(footerScroll);
+
+    footerWrapper.appendChild(bodyFooterContainer);
+
     return {
       "bodyWrapper": bodyWrapper,
       "bodyContainer": bodyContainer,
       "rowsContainer": rowsContainer,
+      "footerWrapper": footerWrapper,
+      "footerScroll": footerScroll,
       "bodyFooterContainer": bodyFooterContainer
     }
   }
@@ -419,11 +434,12 @@ class AgGrid {
         let column = oldColumns[key] || {};
 
         newColumns[key] = {
-          header:    column.header    ?? key,
-          alignment: column.alignment ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
-          type:      column.type      ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
-          width:     column.width     ?? key,
-          frozen:    column.frozen    ?? false
+          header:        column.header        ?? key,
+          alignment:     column.alignment     ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
+          type:          column.type          ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
+          width:         column.width         ?? key,
+          frozen:        column.frozen        ?? false,
+          readOnlyStyle: column.readOnlyStyle ?? false
         };
       });
 
@@ -538,7 +554,13 @@ class AgGrid {
     addScrollGrid: (pStaticId) => {
       const headerWrapper   = document.querySelector(`#${pStaticId} .ag-header-wrapper`);
       const columnContainer = document.querySelector(`#${pStaticId} .ag-col-header-container`);
-      const scroller        = document.querySelector(`#${pStaticId} .ag-body-wrapper`);
+      const bodyWrapper     = document.querySelector(`#${pStaticId} .ag-body-wrapper`);
+      const scroller        = document.querySelector(`#${pStaticId} .ag-footer-wrapper`);
+
+      let scrollerPlaceHolder = scroller.querySelector('.ag-footer-scroll');
+      let firstRowContainer   = bodyWrapper.querySelector('.ag-row-container');
+
+      if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
       
       let data            = this._data;
       
@@ -567,6 +589,7 @@ class AgGrid {
         // columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
 
           headerWrapper.scrollLeft = scroller.scrollLeft;
+          bodyWrapper.scrollLeft   = scroller.scrollLeft;
         
         if ((scroller.scrollLeft + scroller.clientWidth)+2 >= scroller.scrollWidth) {
           renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
@@ -935,6 +958,8 @@ class AgGrid {
         this._rowColumnContainer.className    = `ag-cell-container ${pStyle}`;
 
         if (this._columnOption.frozen) this._rowColumnContainer.classList.add('ag-frozen-column');
+
+        if (this._columnOption.readOnlyStyle) this._rowColumnContainer.classList.add('ag-read-only-column');
 
         this._rowColumnContainer.style.textAlign = this._columnOption.alignment.toLowerCase() || 'start';
 
