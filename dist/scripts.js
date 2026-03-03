@@ -1,10 +1,15 @@
 class AgGrid {
   staticId;
+  name;
   container;
   ajaxId;
   itemsToSubmit;
 
   _utils;
+
+  _exportReport;
+
+  _workbook;
 
   _agHeaderWrapper;
   _agHeader;
@@ -17,11 +22,16 @@ class AgGrid {
 
   _isFiltering = false;
 
-  constructor(staticId, ajaxId, itemsToSubmit) {
+  _reportData;
+
+  constructor(staticId, name, ajaxId, itemsToSubmit) {
     this.staticId      = staticId;
+    this.name          = name;
     this._ajaxId       = ajaxId;
-    this.itemsToSubmit = itemsToSubmit.split(',');
+    this.itemsToSubmit = (itemsToSubmit) && itemsToSubmit.split(',');
     this._utils        = new Utils();
+
+    this._exportReport = new ExportReport();
 
     this._initialize();
   }
@@ -67,12 +77,21 @@ class AgGrid {
     async _makeJSONRequest() {
       let responseData;
 
-      console.log('calling request');
+      if (this._utils.dev.isDevMode()) console.log('calling request');
 
       try {
-        this.container.innerHTML = '<div class="ag-loading-container" style="widht: 300px; height: 300px;"></div>'
+        const loadingContainer = document.createElement('div');
 
-        apex.util.showSpinner(`#${this.staticId} .ag-loading-container`);
+        loadingContainer.className = 'ag-loading-container';
+
+        loadingContainer.style.width = '100%';
+        loadingContainer.style.height = '300px';
+
+        this.container.innerHTML = '';
+
+        this.container.appendChild(loadingContainer);
+
+        apex.util.showSpinner(loadingContainer);
 
         await apex.server.plugin(
           this._ajaxId,
@@ -82,7 +101,8 @@ class AgGrid {
           },
           {
             success: (res) => {
-              console.log(JSON.parse(res.data));
+              // if (this._utils.dev.isDevMode()) console.log(JSON.parse(res.data));
+              if (this._utils.dev.isDevMode()) console.log(res.data);
 
               responseData = res.data;
             },
@@ -99,15 +119,16 @@ class AgGrid {
         this.container.innerHTML = '';
       }
 
-      console.log('request called');
+      if (this._utils.dev.isDevMode()) console.log('request called');
 
       return responseData;
   }
 
   buildAG(pData) {
-    console.time('buildAG', pData);
+    if (this._utils.dev.isDevMode()) console.time('buildAG', pData);
 
-    let data = this._utils.json.parseSafe(pData);
+    // let data = this._utils.json.parseSafe(pData);
+    let data = pData;
 
     if (data) {
       this._data = data;
@@ -128,6 +149,8 @@ class AgGrid {
       }
 
       this._gridUtils.validatePagination();
+
+      this._reportData = data;
 
       if (this._data.options?.toolbar?.showToolbar) this.container.appendChild(this.buildAGToolbar(this.staticId, String(this._data?.options?.style?.theme ?? 'ag-slim').toLowerCase()));
 
@@ -152,8 +175,10 @@ class AgGrid {
 
       this._agBody = this.buildAGBody();
 
+      if (data.options?.rows?.enableZebraStriping) this._agBody.rowsContainer.classList.add('ag-stripe-rows');
+
       this.container.appendChild(this._agBody.bodyWrapper);
-      this.container.appendChild(this._agBody.bodyFooterContainer);
+      this.container.appendChild(this._agBody.footerWrapper);
 
       if (this._data.model.data.length > 0) {
         this.buildAGBodyRow(this._agBody.rowsContainer, this._data, this._data.options.paginations.rows.offset, this._data.options.paginations.rows.pagination-1);
@@ -164,7 +189,7 @@ class AgGrid {
           this._agBody.bodyFooterContainer.append(this._gridUtils.footerUtils.buildPaginationFooter(this._data));
         }
 
-        this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(this.staticId);
+        this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(this.staticId, this._data);
       } else {
         this._agBody.rowsContainer.appendChild(this._gridUtils.noDataFound.create());
       }
@@ -187,29 +212,46 @@ class AgGrid {
       this.container.appendChild(this._gridUtils.noDataFound.create());
     }
 
-    console.timeEnd('buildAG');
+    if (this._utils.dev.isDevMode()) console.timeEnd('buildAG');
   }
 
-  buildAGToolbar(pStaticId, pStyle = 'ag-slim') {
-    console.log(pStyle);
+  buildAGToolbar(staticId, style = 'ag-slim') {
+    const toolbarContainer = document.createElement('div');
 
-    let toolbarContainer = document.createElement('div');
+    toolbarContainer.className = `ag-toolbar-container ${style}`;
 
-    toolbarContainer.className = `ag-toolbar-container ${pStyle}`;
+    const toolbarContainerLeft  = document.createElement('div');
 
-    let toolbarSearchFieldContainer = document.createElement('div');
+    toolbarContainerLeft.className = 'ag-toolbar-container-left';
 
-    toolbarSearchFieldContainer.className = 'ag-toolbar-search-field-container';
+    if (this._data.options.toolbar.searchField.showSearchField) {
+      const toolbarSearchFieldContainer = document.createElement('div');
 
-    toolbarSearchFieldContainer.appendChild(this._gridUtils.toolbarUtils.createSearchField(pStaticId))
+      toolbarSearchFieldContainer.className = 'ag-toolbar-search-field-container';
 
-    toolbarContainer.append(toolbarSearchFieldContainer);
+      toolbarSearchFieldContainer.appendChild(this._gridUtils.toolbarUtils.createSearchField(staticId));
+
+      toolbarContainerLeft.appendChild(toolbarSearchFieldContainer);
+    }
+
+    if (this._data.options.toolbar.actions.showActionsButton) {
+      const toolbarActionsButtonContainer = document.createElement('div');
+
+      toolbarActionsButtonContainer.className ='ag-toolbar-actions-button-container';
+
+      toolbarActionsButtonContainer.appendChild(this._gridUtils.toolbarUtils.createActionsButton(staticId));
+
+      toolbarContainerLeft.appendChild(toolbarActionsButtonContainer);
+    }
+
+    toolbarContainer.appendChild(toolbarContainerLeft);
 
     return toolbarContainer;
   }
 
   buildAGHeaderWrapper() {
     let headerWrapper = document.createElement('div');
+
     headerWrapper.className = 'ag-header-wrapper';
 
     return headerWrapper;
@@ -223,9 +265,9 @@ class AgGrid {
     return headerContainer;
   }
 
-  buildAGColumnHeader(pHeaderContainer, pData, pOffset, pPagination) {
-    let columnsOption = Object.values(pData.options?.columns);
-    let columnsKeys   = Object.keys(pData.options?.columns);
+  buildAGColumnHeader(headerContainer, data, offset, pagination) {
+    let columnsOption = Object.values(data.options?.columns);
+    let columnsKeys   = Object.keys(data.options?.columns);
 
     let fragment = document.createDocumentFragment();
 
@@ -233,14 +275,14 @@ class AgGrid {
 
     let i;
 
-    for(i = pOffset; i <= (pOffset + pPagination); i++) {
+    for(i = offset; i <= (offset + pagination); i++) {
       columnOption = columnsOption[i];
 
       if (columnOption) {    
         // if (!columnOption.staticId) columnOption.staticId = this._utils.random.getRandomId();
         let columnHeader = document.createElement('div');
 
-        columnHeader.className = `ag-col-header ag-col-resizable ag-u-flex ${String(pData.options?.style?.theme ?? 'ag-slim').toLowerCase()}`;
+        columnHeader.className = `ag-col-header ag-col-resizable ag-u-flex ${String(data.options?.style?.theme ?? 'ag-slim').toLowerCase()}`;
 
         if (columnOption.frozen) columnHeader.classList.add('ag-frozen-column');
 
@@ -273,10 +315,10 @@ class AgGrid {
         fragment.appendChild(columnHeader);
       }
 
-      this._data.options.paginations.columns.offset = pOffset + pPagination;
+      this._data.options.paginations.columns.offset = offset + pagination;
     };
 
-    pHeaderContainer.appendChild(fragment);
+    headerContainer.appendChild(fragment);
   }
 
   buildAGBody() {
@@ -292,6 +334,14 @@ class AgGrid {
 
     rowsContainer.className = 'ag-rows-container';
 
+    let footerWrapper = document.createElement('div');
+
+    footerWrapper.className = 'ag-footer-wrapper';
+
+    let footerScroll  = document.createElement('div');
+
+    footerScroll.className = 'ag-footer-scroll';
+
     let bodyFooterContainer = document.createElement('div');
 
     bodyFooterContainer.className = 'ag-body-footer-container';
@@ -300,18 +350,24 @@ class AgGrid {
 
     bodyWrapper.appendChild(bodyContainer);
 
+    footerWrapper.appendChild(footerScroll);
+
+    footerWrapper.appendChild(bodyFooterContainer);
+
     return {
       "bodyWrapper": bodyWrapper,
       "bodyContainer": bodyContainer,
       "rowsContainer": rowsContainer,
+      "footerWrapper": footerWrapper,
+      "footerScroll": footerScroll,
       "bodyFooterContainer": bodyFooterContainer
     }
   }
 
-  buildAGBodyRow(pContainer, pData, pOffset, pPagination, pColumnsOffset = 0, pColumnsPagination = null) {
+  buildAGBodyRow(container, data, offset, pagination, columnsOffset = 0, pColumnsPagination = null) {
     let rowContainer
     let pkRowData;
-    let columnsOptions = pData.options?.columns || {};
+    let columnsOptions = data.options?.columns || {};
     let columns;
     let columnsPagination = (pColumnsPagination != null) ? pColumnsPagination : this._data.options.paginations.columns.pagination-1;
 
@@ -330,12 +386,12 @@ class AgGrid {
 
     let rowIndexes = {};
 
-    pData?.model?.data?.forEach((value, i) => {
+    data?.model?.data?.forEach((value, i) => {
       rowIndexes[i] = { "rowIndex": this._data?.model?.data?.indexOf(value) }
     });
 
-    for(i = pOffset; i <= (pOffset + pPagination); i++) {
-      rowData = pData.model?.data[i];
+    for(i = offset; i <= (offset + pagination); i++) {
+      rowData = data.model?.data[i];
 
       if (rowData) {
         rowContainer = document.createElement('div');
@@ -348,26 +404,26 @@ class AgGrid {
           columns = Object.keys(rowData);
         }
 
-        for (j = pColumnsOffset; j <= columnsPagination; j++) {
+        for (j = columnsOffset; j <= columnsPagination; j++) {
           let rowColumnData = rowData[columns[j]];
 
-          if (rowColumnData) rowContainer.appendChild(this._gridUtils.columnUtils.buildRowColumn(rowColumnData, columnsOptions, columns[j], pData.options?.style?.theme));
+          if (rowColumnData) rowContainer.appendChild(this._gridUtils.columnUtils.buildRowColumn(rowColumnData, columnsOptions, columns[j], data.options?.style?.theme));
         }
 
         fragment.appendChild(rowContainer);
 
         displayedRowsQty = i+1;
       } else {
-        i = pOffset + pPagination;
+        i = offset + pagination;
       }
 
     }
 
     this._data.options.paginations.rows.offset = i;
 
-    if (pData.options.paginations.rows.type.toLowerCase() == 'page') this._gridUtils.footerUtils.setPaginationLabel(this.staticId, pOffset, displayedRowsQty);
+    if (data.options.paginations.rows.type.toLowerCase() == 'page') this._gridUtils.footerUtils.setPaginationLabel(this.staticId, data, offset, displayedRowsQty);
 
-    pContainer.appendChild(fragment);
+    container.appendChild(fragment);
 
     window.dispatchEvent(new Event('resize'));
   }
@@ -405,7 +461,7 @@ class AgGrid {
     validateOptions: () => {
       if (!this._data.options) this._data.options = {};
 
-      if (!this._data.model || !this._data.model?.data) return false;
+      if (!this._data.model || !this._data.model?.data || this._data.model?.data?.length == 0) return false;
 
       let rowData = this._data.model.data[0];
       let keys    = Object.keys(rowData);
@@ -419,11 +475,12 @@ class AgGrid {
         let column = oldColumns[key] || {};
 
         newColumns[key] = {
-          header:    column.header    ?? key,
-          alignment: column.alignment ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
-          type:      column.type      ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
-          width:     column.width     ?? key,
-          frozen:    column.frozen    ?? false
+          header:        column.header        ?? key,
+          alignment:     column.alignment     ?? (typeof rowData[key].value == 'number' ? 'right' : 'left'),
+          type:          column.type          ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
+          width:         column.width         ?? key,
+          frozen:        column.frozen        ?? false,
+          readOnlyStyle: column.readOnlyStyle ?? false
         };
       });
 
@@ -434,6 +491,10 @@ class AgGrid {
       if (!this._data.options.toolbar.searchField) this._data.options.toolbar.searchField = {}
 
       this._data.options.toolbar.searchField.showSearchField = this._data.options.toolbar.searchField.showSearchField ?? true;
+
+      if (!this._data.options.toolbar.actions) this._data.options.toolbar.actions = {};
+
+      this._data.options.toolbar.actions.showActionsButton = this._gridUtils.toolbarUtils.validateActionsButton(this._data);
 
       this._data.options.toolbar.showToolbar = this._gridUtils.toolbarUtils.validateShowToolbar(this._data);
 
@@ -472,20 +533,20 @@ class AgGrid {
         return noDataFoundContainer;
       }
     },
-    setAutoResize: (pStaticId) => {
+    setAutoResize: (staticId) => {
       let columnsWithoutResize;
 
       const autoResize = () => { 
         clearTimeout(this._autoResizeTimer);
 
         this._autoResizeTimer = setTimeout(() => {
-          let columnHeaders = document.querySelectorAll(`#ag-${pStaticId} .ag-col-header`);
+          let columnHeaders = document.querySelectorAll(`#ag-${staticId} .ag-col-header`);
           
           for(const columnHeader of columnHeaders) {
-            document.querySelectorAll(`#ag-${pStaticId} .ag-cell-container[data-column="${columnHeader.getAttribute('data-column')}"]`).forEach((rowColumn) => {
+            document.querySelectorAll(`#ag-${staticId} .ag-cell-container[data-column="${columnHeader.getAttribute('data-column')}"]`).forEach((rowColumn) => {
               rowColumn.style.width = `${columnHeader.getBoundingClientRect().width}px`;
 
-              columnsWithoutResize = [...document.querySelectorAll(`#${pStaticId} .ag-cell-container`)].filter((column) => column.style.flex != '0 0 auto');
+              columnsWithoutResize = [...document.querySelectorAll(`#${staticId} .ag-cell-container`)].filter((column) => column.style.flex != '0 0 auto');
             
               columnsWithoutResize.forEach((columnWithoutResize) => {
                 columnWithoutResize.style.flex = '0 0 auto';
@@ -535,10 +596,16 @@ class AgGrid {
 
       }
     },
-    addScrollGrid: (pStaticId) => {
-      const headerWrapper   = document.querySelector(`#${pStaticId} .ag-header-wrapper`);
-      const columnContainer = document.querySelector(`#${pStaticId} .ag-col-header-container`);
-      const scroller        = document.querySelector(`#${pStaticId} .ag-body-wrapper`);
+    addScrollGrid: (staticId) => {
+      const headerWrapper   = document.querySelector(`#${staticId} .ag-header-wrapper`);
+      const columnContainer = document.querySelector(`#${staticId} .ag-col-header-container`);
+      const bodyWrapper     = document.querySelector(`#${staticId} .ag-body-wrapper`);
+      const scroller        = document.querySelector(`#${staticId} .ag-footer-wrapper`);
+
+      let scrollerPlaceHolder = scroller.querySelector('.ag-footer-scroll');
+      let firstRowContainer   = bodyWrapper.querySelector('.ag-row-container');
+
+      if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
       
       let data            = this._data;
       
@@ -567,9 +634,10 @@ class AgGrid {
         // columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
 
           headerWrapper.scrollLeft = scroller.scrollLeft;
+          bodyWrapper.scrollLeft   = scroller.scrollLeft;
         
         if ((scroller.scrollLeft + scroller.clientWidth)+2 >= scroller.scrollWidth) {
-          renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
+          renderedColumns = document.querySelectorAll(`#${staticId} .ag-col-header`);
 
           if (renderedColumns.length < columnsLength) {
             offset     = paginations.columns?.offset;
@@ -587,7 +655,7 @@ class AgGrid {
 
             buildAGColumnHeader(headerContainer, data, offset, pagination);
 
-            document.querySelectorAll(`#${pStaticId} .ag-row-container`).forEach((rowContainer, i) => {
+            document.querySelectorAll(`#${staticId} .ag-row-container`).forEach((rowContainer, i) => {
               rowData       = data.model.data[i];
               rowColumnKeys = Object.keys(rowData);
 
@@ -600,7 +668,9 @@ class AgGrid {
               }
             });
 
-            this._gridUtils.setResizableColumn(pStaticId);
+            if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
+
+            this._gridUtils.setResizableColumn(staticId);
           }
         }
 
@@ -614,8 +684,8 @@ class AgGrid {
         if (!this._isFiltering)
 
         if ((document.documentElement.scrollTop + document.documentElement.clientHeight)+10 >= document.documentElement.scrollHeight) {
-          renderedRows    = document.querySelectorAll(`#${pStaticId} .ag-row-container`);
-          renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`);
+          renderedRows    = document.querySelectorAll(`#${staticId} .ag-row-container`);
+          renderedColumns = document.querySelectorAll(`#${staticId } .ag-col-header`);
 
           if (renderedRows.length < rowsLength) {
             offsetRows     = this._data.options.paginations.rows.offset;
@@ -673,17 +743,25 @@ class AgGrid {
     },
 
     toolbarUtils: {
-      validateShowToolbar: (pData) => {
-        if (pData.options.toolbar.showToolbar == false) return false;
+      validateShowToolbar: (data) => {
+        if (!data.options.toolbar.showToolbar) return false;
 
-        if (!pData.options.toolbar.searchField.showSearchField) {
-          return false;
-        }
+        if (
+          !data.options.toolbar.searchField.showSearchField && 
+          !data.options.toolbar.actions.showActionsButton
+        ) return false;
 
         return true;
       },
-      addSearchInputEventListener: (pElement, pStaticId) => {
-        pElement.addEventListener('keyup', (event) => {
+      validateActionsButton: (data) => {
+        if (!data.options.toolbar.actions.showActionsButton) return false;
+
+        if (!data.options.toolbar.actions.showDownloadReport) return false;
+
+        return true;
+      },
+      addSearchInputEventListener: (element, staticId) => {
+        element.addEventListener('keyup', (event) => {
           if (event.key !== 'Enter') return;
 
           this._isFiltering = true;
@@ -709,13 +787,16 @@ class AgGrid {
             }
 
             if (filteredValue.model?.data?.length > 0) {
-              // this.buildAGBodyRow(this._agBody.rowsContainer, filteredValue, filteredValue.options?.paginations?.rows?.initialOffset, filteredValue.options?.paginations?.rows?.pagination-1)
-              this.buildAGBodyRow(this._agBody.rowsContainer, filteredValue, filteredValue.options?.paginations?.rows?.initialOffset, filteredValue.model?.data?.length-1)
-            
               if (String(this._data?.options?.paginations?.rows?.type).toUpperCase() == 'PAGE') {
+                this.buildAGBodyRow(this._agBody.rowsContainer, filteredValue, 0, this._data?.options?.paginations?.rows?.pagination-1);
+                
                 this._agBody.bodyFooterContainer.appendChild(this._gridUtils.footerUtils.buildPaginationFooter(filteredValue));
-                this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(pStaticId);
+                this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(staticId, filteredValue);
+              } else {
+                this.buildAGBodyRow(this._agBody.rowsContainer, filteredValue, filteredValue.options?.paginations?.rows?.initialOffset, filteredValue.model?.data?.length-1)
               }
+
+              this._reportData = filteredValue;
             } else {
               this._agBody.rowsContainer.appendChild(this._gridUtils.noDataFound.create());
             }
@@ -724,14 +805,16 @@ class AgGrid {
           
             if (String(this._data?.options?.paginations?.rows?.type).toUpperCase() == 'PAGE') {
               this._agBody.bodyFooterContainer.appendChild(this._gridUtils.footerUtils.buildPaginationFooter(this._data));
-              this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(pStaticId);
+              this._gridUtils.footerUtils.addEventsListenersToPaginationButtons(staticId, this._data);
             }
 
             this._isFiltering = false;
+
+            this._reportData = this._data;
           }
         });
       },
-      createSearchField: (pStaticId) => {
+      createSearchField: (staticId) => {
         let toolbarSearchFieldInputContainer = document.createElement('div');
 
         toolbarSearchFieldInputContainer.className = 'ag-toolbar-search-field-input-container';
@@ -756,7 +839,7 @@ class AgGrid {
 
         let toolbarSearchInput = document.createElement('input');
 
-        toolbarSearchInput.setAttribute('id', `ag-toolbar-input-${pStaticId}`);
+        toolbarSearchInput.setAttribute('id', `ag-toolbar-input-${staticId}`);
         
         toolbarSearchInput.setAttribute('type', 'text');
 
@@ -764,21 +847,206 @@ class AgGrid {
 
         toolbarSearchInputContainer.appendChild(toolbarSearchInput);
 
-        this._gridUtils.toolbarUtils.addSearchInputEventListener(toolbarSearchInput, pStaticId);
+        this._gridUtils.toolbarUtils.addSearchInputEventListener(toolbarSearchInput, staticId);
 
         toolbarSearchFieldInputContainer.appendChild(toolbarSearchInputContainer);
 
         return toolbarSearchFieldInputContainer;
+      },
+      addActionsButtonEventListener: (staticId, pElement) => {
+        const createExportationType = (icon, label, type, selected = false) => {
+          const exportationType = document.createElement('div');
+
+          exportationType.className = 'ag-report-export-type';
+
+          exportationType.setAttribute('data-type', type);
+          exportationType.setAttribute('role', 'option');
+          exportationType.setAttribute('aria-selected', String(selected));
+          exportationType.setAttribute('title', this._utils.escapeHtml(label));
+
+          const exportationOptionTypeIcon = document.createElement('div');
+
+          exportationOptionTypeIcon.className = 'ag-report-export-type-icon';
+
+          exportationOptionTypeIcon.innerHTML = `<span style="font-size: 32px;" class="fa ${icon}"></span>`;
+
+          const exportationOptionTypeLabel = document.createElement('div');
+
+          exportationOptionTypeLabel.className = 'ag-repost-export-type-label';
+
+          exportationOptionTypeLabel.innerHTML = `<span>${this._utils.escapeHtml(label)}</span>`
+
+          exportationType.appendChild(exportationOptionTypeIcon);
+          exportationType.appendChild(exportationOptionTypeLabel);
+
+          return exportationType;
+        }
+
+        const element = this._utils.elements.getElement(pElement);
+
+        const modalContent = document.createElement('div');
+
+        modalContent.className = 'ag-modal-content';
+
+        const modalTopRegionContainer = document.createElement('div');
+
+        modalTopRegionContainer.className = 'ag-modal-top-region-container';
+
+        const modalChooseFormatTitle = document.createElement('div');
+
+        modalChooseFormatTitle.className = 'ag-top-region-title'
+
+        modalChooseFormatTitle.innerHTML = '<span>Escolher Formato</span>';
+
+        modalTopRegionContainer.appendChild(modalChooseFormatTitle);
+
+        const modalExportTypesContainer = document.createElement('div');
+
+        modalExportTypesContainer.appendChild(createExportationType('fa-file-excel-o', 'Excel', 'xlsx', true));
+
+        modalTopRegionContainer.appendChild(modalExportTypesContainer);
+
+        modalContent.appendChild(modalTopRegionContainer);
+
+        const modalId = this._utils.random.getRandomId();
+
+        const exportationFunctions = {
+          "xlsx": () => {
+
+            let xlsxData = { worksheetName: 'Planilha1', columns: [], rows: [], custom: [] };
+
+            const keys = Object.keys(this._reportData?.options?.columns);
+
+            let customValue;
+
+            let columnWidth = 0;
+
+            keys.forEach((key) => {
+              const columnData = this._reportData.options.columns[key];
+
+              columnWidth = String(columnData.header).length * 2;
+              
+              xlsxData.columns.push(
+                {
+                  "key": key,
+                  "header": columnData.header,
+                  "width": (columnWidth >= 30) ? columnWidth : 30,
+                }
+              );
+
+              customValue = {};
+
+              customValue.alignment = {};
+
+              customValue.alignment.vertical = 'middle';
+              customValue.alignment.horizontal = this._reportData.options.columns[key].alignment;
+              customValue.alignment.wrapText = true;
+
+              xlsxData.custom.push(customValue);
+            });
+
+            this._reportData.model?.data.forEach((row) => {
+              let rowValue = {}
+
+              keys.forEach((key) => {
+                rowValue[key] = String(row[key].value);
+              });
+
+              xlsxData.rows.push(rowValue);
+            });
+
+            const downloadButton = document.getElementById(modalId).closest('.ui-dialog').querySelector('.t-Button--hot');
+
+            if (downloadButton) {
+              downloadButton.classList.add('apex_disabled');
+
+              downloadButton.innerHTML = `
+                <span class="fa fa-circle-2-8 fa-anim-spin"></span> Baixando...
+              `;
+            }
+
+            try {
+              this._exportReport.exportXLSX(this.name, xlsxData);
+            } catch (e) {
+              this._utils.message.clearMessages();
+
+              this._utils.message.showErrorMessage(`Erro ao exportar relatório: \n${e.message}`);
+            }
+          }
+        }
+
+        const modalConfig = { 
+          modalId: modalId,
+          modalTitle: 'Fazer Download',
+          content: modalContent,
+          modalHeight: 300,
+          modalWidth: 300,
+          modalButtons: [
+            // {
+            //   text: "Cancelar",
+            //   click: (modal) => {
+            //     modal.dialog("close");
+            //   },
+            // },
+            {
+              text: "Fazer download",
+              class: "t-Button--hot",
+              style: "background-color: #0b2636 !important; color: #FFFFFF !important;",
+              click: (modal) => {
+                const selectedReportExportType = document.querySelector('.ag-report-export-type[aria-selected="true"]');
+
+                if (selectedReportExportType) {
+                  const repotExportType = selectedReportExportType.getAttribute('data-type');
+
+                  exportationFunctions[repotExportType]();
+                }
+
+                modal.dialog("close");
+              }
+            }
+          ]
+        };
+
+        const popupConfig = [];
+
+        if (this._data.options.toolbar.actions.showDownloadReport) {
+          popupConfig.push({
+            icon: "fa-download",
+            label: "Fazer Download",
+            callback: () => {
+              this._utils.modal.callModal(modalConfig);
+            }
+          });
+        }
+
+        element.addEventListener('click', (event) => {
+
+          this._utils.popup.calloutPopup(staticId, event.target.closest('.ag-toolbar-actions-button-container'), popupConfig);
+        });
+      },
+      createActionsButton: (staticId) => {
+        const actionsButton = document.createElement('button');
+
+        actionsButton.className = 'ag-actions-button';
+
+        actionsButton.setAttribute('type', 'button');
+
+        actionsButton.innerHTML = '<span>Ações</span>';
+        actionsButton.innerHTML += '<span style="font-size: 10px" class="fa fa-chevron-down"></span>';
+
+        this._gridUtils.toolbarUtils.addActionsButtonEventListener(staticId, actionsButton);
+
+        return actionsButton;
       }
     },
 
     columnUtils: {
-      addColumnEventListeners: (pStaticId, pData) => {
+      addColumnEventListeners: (staticId, data) => {
         if (this._columnEventListenerController) this._columnEventListenerController.abort();
 
         this._columnEventListenerController = new AbortController();
 
-        document.querySelector(`#${pStaticId} .ag-container`).addEventListener('click', async (event) => {
+        document.querySelector(`#${staticId} .ag-container`).addEventListener('click', async (event) => {
           const rowContainer        = event.target.closest('.ag-row-container');
           const column              = event.target.closest('.ag-cell-container');
           
@@ -787,7 +1055,7 @@ class AgGrid {
           const rowColumnObjectName = column.getAttribute('data-column'); 
 
           const rowIndex            = parseInt(rowContainer.getAttribute('data-rownum')) -1;
-          const rowColumnObject     = pData?.model?.data[rowIndex][rowColumnObjectName];
+          const rowColumnObject     = data?.model?.data[rowIndex][rowColumnObjectName];
           
           if (event.target.closest('.ag-link-column-container div')) {
             const columnDataUrl = event.target.closest('.ag-cell-container').getAttribute('data-url');
@@ -842,7 +1110,7 @@ class AgGrid {
               }
             });
             
-            this._utils.popup.calloutPopup(pStaticId, event.target.closest('.ag-context-menu-column span'), contextMenuConfigs);
+            this._utils.popup.calloutPopup(staticId, event.target.closest('.ag-context-menu-column span'), contextMenuConfigs);
           }
         }, 
         {
@@ -850,13 +1118,13 @@ class AgGrid {
         });
       },
       headerUtils: {
-        setStickyHeader: (pStaticId) => {
-          this._gridUtils.columnUtils.headerUtils.createPlaceHolderHeader(pStaticId);
+        setStickyHeader: (staticId) => {
+          this._gridUtils.columnUtils.headerUtils.createPlaceHolderHeader(staticId);
 
-          $(`#${pStaticId} .ag-col-header-container`).stickyWidget();
+          $(`#${staticId} .ag-col-header-container`).stickyWidget();
         },
-        createPlaceHolderHeader: (pStaticId) => {
-          const colHeaderContainer = document.querySelector(`#${pStaticId} .ag-col-header-container`);
+        createPlaceHolderHeader: (staticId) => {
+          const colHeaderContainer = document.querySelector(`#${staticId} .ag-col-header-container`);
 
           $(colHeaderContainer).after(`<div class="ag-u-flex" style="width: ${colHeaderContainer.getBoundingClientRect().width}px;"></div>`);
         },
@@ -889,41 +1157,43 @@ class AgGrid {
 
           return this._columnHeaderOrderBy;
         },
-        setColumnPopupOptions: (pStaticId) => {
+        setColumnPopupOptions: (staticId) => {
           // TO DO
 
-          // document.querySelectorAll(`#${pStaticId} .ag-col-header`).forEach((columnHeader) => {
+          // document.querySelectorAll(`#${staticId} .ag-col-header`).forEach((columnHeader) => {
           //   this._utils.popup.calloutPopup(columnHeader);
           // });
         },
-        applyStickyTop: (pStaticId) => {
-          let navbarHeight = document.querySelector('.t-Header-branding').offsetHeight;
+        applyStickyTop: (staticId) => {
+          const navbar = document.querySelector('.t-Header-branding');
+
+          let navbarHeight = (navbar) ? navbar.offsetHeight : 0;
 
           if (navbarHeight) {
-            document.querySelector(`#${pStaticId} .ag-header-wrapper`).style.top = `${navbarHeight}px`;
+            document.querySelector(`#${staticId} .ag-header-wrapper`).style.top = `${navbarHeight}px`;
           }
         }
       },
-      buildRowColumn: (pRowColumnData, pColumnsOptions, pColumnName, pStyle = 'ag-slim') => {
-        this._columnOption = pColumnsOptions[pColumnName] 
-                          || pColumnName[pColumnName.toUpperCase()] 
-                          || pColumnsOptions[pColumnName.toLowerCase()] 
+      buildRowColumn: (rowColumnData, columnsOptions, columnName, style = 'ag-slim') => {
+        this._columnOption = columnsOptions[columnName] 
+                          || columnName[columnName.toUpperCase()] 
+                          || columnsOptions[columnName.toLowerCase()] 
                           || null;      
 
         if (!this._columnOption) {
-          errorMessage = `Opções para a coluna "${pColumnName.toUpperCase()}" não encontrada.`;
+          errorMessage = `Opções para a coluna "${columnName.toUpperCase()}" não encontrada.`;
 
           this._utils.message.showErrorMessage(errorMessage);
 
           throw new Error(errorMessage);
         }
 
-        if (!this._columnDOMConfig[pColumnName]) {
+        if (!this._columnDOMConfig[columnName]) {
           let definedWidth = this._columnOption.width;
           let headerElement = document.getElementById(this._columnOption.staticId);
           let finalWidth = definedWidth ? `${definedWidth}px` : (headerElement ? `${headerElement.getBoundingClientRect().width}px` : 'auto');
 
-          this._columnDOMConfig[pColumnName] = {
+          this._columnDOMConfig[columnName] = {
             "width": finalWidth,
             // "width": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().width}px`,
             "height": `${document.getElementById(this._columnOption.staticId).getBoundingClientRect().height}px`,
@@ -932,31 +1202,41 @@ class AgGrid {
 
         this._rowColumnContainer = document.createElement('div');
         
-        this._rowColumnContainer.className    = `ag-cell-container ${pStyle}`;
+        this._rowColumnContainer.className    = `ag-cell-container ${style}`;
 
         if (this._columnOption.frozen) this._rowColumnContainer.classList.add('ag-frozen-column');
+
+        if (this._columnOption.readOnlyStyle) this._rowColumnContainer.classList.add('ag-read-only-column');
 
         this._rowColumnContainer.style.textAlign = this._columnOption.alignment.toLowerCase() || 'start';
 
         // if (String(pRowColumnData.custom?.displayType).toLowerCase() == 'link') this._rowColumnContainer.style.textAlign = 'center';
 
-        this._rowColumnContainer.style.width     = this._columnDOMConfig[pColumnName].width;
+        this._rowColumnContainer.style.width     = this._columnDOMConfig[columnName].width;
 
         if (this._columnOption.width) {
-            this._rowColumnContainer.style.minWidth = this._columnDOMConfig[pColumnName].width;
-            this._rowColumnContainer.style.flex = `0 0 ${this._columnDOMConfig[pColumnName].width}`;
+            this._rowColumnContainer.style.minWidth = this._columnDOMConfig[columnName].width;
+            this._rowColumnContainer.style.flex = `0 0 ${this._columnDOMConfig[columnName].width}`;
         }
         // rowColumnContainer.style.width     = document.getElementById(columnOption.staticId).getBoundingClientRect().width;
-        this._rowColumnContainer.style.height    = this._columnDOMConfig[pColumnName].height;
+        this._rowColumnContainer.style.height    = this._columnDOMConfig[columnName].height;
 
         this._rowColumnContainer.setAttribute('data-column-header-id', this._columnOption.staticId);
-        this._rowColumnContainer.setAttribute('data-column', pColumnName);
+        this._rowColumnContainer.setAttribute('data-column', columnName);
         
-        if (pRowColumnData.custom) {
-          this._customColumnData = pRowColumnData.custom;
+        // if (rowColumnData.custom) {
+          if (rowColumnData.custom) this._customColumnData = rowColumnData.custom;
 
-          if (String(this._customColumnData.displayType).toUpperCase() == "BADGE") {
-            if (pRowColumnData.value) {
+          if ((this._customColumnData?.displayType || 'NORMAL') == 'NORMAL') {
+            this._rowColumnContainer.appendChild(
+              this._gridUtils.columnUtils.cellUtils.buildCell(
+                String(this._customColumnData?.icon || '').toLowerCase(), 
+                this._utils.escapeHtml(rowColumnData.value), 
+                this._customColumnData?.alignment || 'left'
+              )
+            );
+          } else if (String(this._customColumnData.displayType).toUpperCase() == "BADGE") {
+            if (rowColumnData.value) {
               if (["danger", "warning", "success", "info"].includes(String(this._customColumnData.badgeColor).toLowerCase())) {
                 this._badgeColor = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.color;
                 this._fontColor  = this._utils.color.getTemplateColor(this._customColumnData.badgeColor)?.fontColor;
@@ -967,11 +1247,11 @@ class AgGrid {
 
               this._rowColumnContainer.appendChild(
                 this._gridUtils.columnUtils.cellUtils.buildBadgeCell(
-                  this._utils.escapeHtml(pRowColumnData.value),
+                  this._utils.escapeHtml(rowColumnData.value),
                   this._badgeColor,
                   this._fontColor,
                   (this._customColumnData.badgeType || 1),
-                  String(pStyle ?? 'ag-slim').toLowerCase()            
+                  String(style ?? 'ag-slim').toLowerCase()            
                 )
               );
 
@@ -981,100 +1261,100 @@ class AgGrid {
             }
           } else if (String(this._customColumnData.displayType).toUpperCase() == 'LINK') {
             this._rowColumnContainer.appendChild(
-              this._gridUtils.columnUtils.cellUtils.buildLinkCell(this._customColumnData.icon, this._utils.escapeHtml(pRowColumnData.value), this._customColumnData.alignment, String(pStyle ?? 'ag-slim').toLowerCase())
+              this._gridUtils.columnUtils.cellUtils.buildLinkCell(this._customColumnData.icon, this._utils.escapeHtml(rowColumnData.value), this._customColumnData.alignment, String(style ?? 'ag-slim').toLowerCase())
             );
           } else if (String(this._customColumnData.displayType).toUpperCase() == 'CONTEXT-MENU') {
             this._rowColumnContainer.appendChild(
               this._gridUtils.columnUtils.cellUtils.buildContextCell(
                 String(this._customColumnData.icon).toLowerCase(), 
-                this._utils.escapeHtml(pRowColumnData.value), 
+                this._utils.escapeHtml(rowColumnData.value), 
                 String(this._customColumnData.alignment).toLowerCase(),
-                String(pStyle ?? 'ag-slim').toLowerCase()
+                String(style ?? 'ag-slim').toLowerCase()
               )
             );
           }
-        }
-        else {
-          this._rowColumnContainer.innerHTML = this._utils.escapeHtml(pRowColumnData.value);
-        }
+        // }
+        // else {
+          // this._rowColumnContainer.innerHTML = this._utils.escapeHtml(pRowColumnData.value);
+        // }
+
+        this._customColumnData = null;
 
         return this._rowColumnContainer;
       },
       cellUtils: {
-        buildIconCell: (pIcon = '', pLabel = '', pIconAlignment = 'left', pClassName = '') => {
-          const createLabel = (pLabel) => {
+        buildCell: (icon = '', label = '', iconAlignment = 'left', className = '') => {
+          const createLabel = (label) => {
             this._labelCell = document.createElement('span');
 
             this._labelCell.className = 'ag-label-cell';
 
-            this._labelCell.innerText = pLabel || '';
+            this._labelCell.innerText = label || '';
 
             return this._labelCell;
           }
 
           this._cellContainer = document.createElement('div');
 
-          if (pClassName) this._cellContainer.className = pClassName;
+          if (className) this._cellContainer.className = className;
 
           this._IconCell      = document.createElement('span');
 
-          this._IconCell.className = `ag-icon-cell fa`;
+          this._IconCell.className = `ag-icon-cell fa ${icon}`;
 
           this._IconCell.style.fontSize = 'inherit';
 
-          if (pIcon) this._IconCell.classList.add(pIcon);
-
           this._cellContainer.appendChild(this._IconCell); 
 
-          if (((pIconAlignment ?? 'left') == 'left') && (pLabel != '')) {
-            this._cellContainer.insertAdjacentElement('beforeend', createLabel(pLabel));
-          } else if (((pIconAlignment ?? 'right') == 'right') && (pLabel != '')) { 
-            this._cellContainer.insertAdjacentElement('afterbegin', createLabel(pLabel));
+          if (((iconAlignment ?? 'left') == 'left') && (label != '')) {
+            this._cellContainer.insertAdjacentElement('beforeend', createLabel(label));
+          } else if (((iconAlignment ?? 'right') == 'right') && (label != '')) { 
+            this._cellContainer.insertAdjacentElement('afterbegin', createLabel(label));
           }
 
           return this._cellContainer;
         },
-        buildLinkCell: (pIcon, pLabel, pAlignment, pStyle = 'ag-slim') => {
+        buildLinkCell: (icon, label, alignment, style = 'ag-slim') => {
           this._columnContainer = document.createElement('div');
 
-          this._columnContainer.className = `ag-link-column-container ${pStyle}`;
+          this._columnContainer.className = `ag-link-column-container ${style}`;
 
-          this._columnContainer.appendChild(this._gridUtils.columnUtils.cellUtils.buildIconCell(pIcon, pLabel, pAlignment));
+          this._columnContainer.appendChild(this._gridUtils.columnUtils.cellUtils.buildCell(icon, label, alignment));
 
           return this._columnContainer;
         },
-        buildBadgeCell: (pValue, pBadgeColor = '#9500BA', pFontColor = "#FFFFFF", pType = 1, pStyle = 'ag-slim') => {
+        buildBadgeCell: (value, badgeColor = '#9500BA', fontColor = "#FFFFFF", type = 1, style = 'ag-slim') => {
           this._badgeColumnContainer = document.createElement('div');
           
-          this._badgeColumnContainer.className = `ag-badge-column-container ${pStyle}`;
+          this._badgeColumnContainer.className = `ag-badge-column-container ${style}`;
 
           this._badgeColumn = document.createElement('div');
 
           this._badgeColumn.className = 'ag-badge-column';
 
-          if (pType == 2) {
-            this._badgeColumnColor  = this._utils.color.reduceHexOpacity(pBadgeColor, '0.3');
+          if (type == 2) {
+            this._badgeColumnColor  = this._utils.color.reduceHexOpacity(badgeColor, '0.3');
 
-            this._badgeColumn.style.border = `solid 2px ${pBadgeColor}`;
+            this._badgeColumn.style.border = `solid 2px ${badgeColor}`;
           } else {
-            this._badgeColumnColor      = pBadgeColor;
+            this._badgeColumnColor      = badgeColor;
           }
 
           this._badgeColumn.style.backgroundColor = this._badgeColumnColor;
-          this._badgeColumn.style.color           = (pType != 2) ? pFontColor : pBadgeColor;
+          this._badgeColumn.style.color           = (type != 2) ? fontColor : badgeColor;
 
-          this._badgeColumn.innerHTML = pValue;
+          this._badgeColumn.innerHTML = value;
 
           this._badgeColumnContainer.appendChild(this._badgeColumn);
 
           return this._badgeColumnContainer;
         },
-        buildContextCell: (pIcon, pLabel = '', pIconAlignment = 'left', pStyle = 'ag-slim') => {
+        buildContextCell: (icon, label = '', iconAlignment = 'left', style = 'ag-slim') => {
           this._columnContainer = document.createElement('div');
 
-          this._columnContainer.className = `ag-context-menu-column ${pStyle}`;
+          this._columnContainer.className = `ag-context-menu-column ${style}`;
 
-          this._columnContainer.appendChild(this._gridUtils.columnUtils.cellUtils.buildIconCell(pIcon, pLabel, pIconAlignment, pStyle, 'ag-context-menu'));
+          this._columnContainer.appendChild(this._gridUtils.columnUtils.cellUtils.buildCell(icon, label, iconAlignment, style, 'ag-context-menu'));
 
           return this._columnContainer;
         }
@@ -1087,20 +1367,20 @@ class AgGrid {
         });
       },
       frozenColumn: {
-        configurateFrozenColumns: (pStaticId) => {
-          this._gridUtils.columnUtils.frozenColumn.validateAllFrozenColumn(pStaticId);
-          this._gridUtils.columnUtils.frozenColumn.setLastFrozenColumnClass(pStaticId);
-          this._gridUtils.columnUtils.frozenColumn.applyStickyLeft(pStaticId);
+        configurateFrozenColumns: (staticId) => {
+          this._gridUtils.columnUtils.frozenColumn.validateAllFrozenColumn(staticId);
+          this._gridUtils.columnUtils.frozenColumn.setLastFrozenColumnClass(staticId);
+          this._gridUtils.columnUtils.frozenColumn.applyStickyLeft(staticId);
         },
-        setLastFrozenColumnClass: (pStaticId) => {
-          let agFrozenColumnHeaders = document.querySelectorAll(`#${pStaticId} .ag-col-header.ag-frozen-column`);
+        setLastFrozenColumnClass: (staticId) => {
+          let agFrozenColumnHeaders = document.querySelectorAll(`#${staticId} .ag-col-header.ag-frozen-column`);
           let agFrozenColumns;
 
           if ((agFrozenColumnHeaders.length -1) >= 0) {
             agFrozenColumnHeaders[agFrozenColumnHeaders.length-1].classList.add('ag-frozen-column-last');
           };
 
-        document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((rowContainer) => {
+        document.querySelectorAll(`#${staticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((rowContainer) => {
             agFrozenColumns = rowContainer.querySelectorAll('.ag-cell-container.ag-frozen-column');
 
             if ((agFrozenColumns.length -1) >= 0) {
@@ -1108,8 +1388,8 @@ class AgGrid {
             }
           });
         },
-        applyStickyLeft: (pStaticId) => {
-          let firstAGRowFrozenColumnContainer = document.querySelector(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`);
+        applyStickyLeft: (staticId) => {
+          let firstAGRowFrozenColumnContainer = document.querySelector(`#${staticId} .ag-row-container:has(.ag-frozen-column)`);
 
           if (!firstAGRowFrozenColumnContainer) return;
 
@@ -1126,7 +1406,7 @@ class AgGrid {
 
             frozenColumnIndex = [...frozenColumn.parentNode.children].indexOf(frozenColumn);
 
-            document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((agRowContainer) => {
+            document.querySelectorAll(`#${staticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((agRowContainer) => {
               column = agRowContainer.children[frozenColumnIndex];
 
               if (!column) return;
@@ -1134,7 +1414,7 @@ class AgGrid {
               column.style.left = `${frozenColumnLeftCSSValue}px`;
               column.style.zIndex = 10 - frozenColumnIndex;
 
-              columnHeader = document.querySelector(`#${pStaticId} .ag-col-header-container:has(.ag-frozen-column)`).children[frozenColumnIndex];
+              columnHeader = document.querySelector(`#${staticId} .ag-col-header-container:has(.ag-frozen-column)`).children[frozenColumnIndex];
 
               if (!columnHeader) return;
 
@@ -1145,8 +1425,8 @@ class AgGrid {
             frozenColumnLeftCSSValue += frozenColumnWidth;
           });
         },
-        validateAllFrozenColumn: (pStaticId) => {
-          let agRowsFrozenColumnContainer = document.querySelectorAll(`#${pStaticId} .ag-row-container:has(.ag-frozen-column)`);
+        validateAllFrozenColumn: (staticId) => {
+          let agRowsFrozenColumnContainer = document.querySelectorAll(`#${staticId} .ag-row-container:has(.ag-frozen-column)`);
 
           if (agRowsFrozenColumnContainer.length == 0) return;
 
@@ -1159,7 +1439,7 @@ class AgGrid {
             agFrozenColumn[agFrozenColumn.length-1]
           );
 
-          let columnHeaders = document.querySelectorAll(`#${pStaticId} .ag-col-header-container .ag-col-header`);
+          let columnHeaders = document.querySelectorAll(`#${staticId} .ag-col-header-container .ag-col-header`);
 
           for(i = 0; i <= lastAGFrozenColumnIndex; i++) {
             columnHeaders[i].classList.add('ag-frozen-column');
@@ -1176,17 +1456,17 @@ class AgGrid {
       }
     },
     footerUtils: {
-      buildPaginationFooter: (pData) => {
-        function buildPageButton(pIcon = '', pText = '', pDataPage = '') {
+      buildPaginationFooter: (data) => {
+        function buildPageButton(icon = '', text = '', dataPage = '') {
           let pageButton = document.createElement('div');
 
           pageButton.className = `ag-page-btn`;
 
-          if (pIcon != '') pageButton.innerHTML = `<span class="fa ${pIcon}"></span>`;
+          if (icon != '') pageButton.innerHTML = `<span class="fa ${icon}"></span>`;
 
-          if (pText != '') pageButton.innerHTML += `<span>${pText}</span>`;
+          if (text != '') pageButton.innerHTML += `<span>${text}</span>`;
 
-          if (pDataPage != '') pageButton.setAttribute('data-page', pDataPage);
+          if (dataPage != '') pageButton.setAttribute('data-page', dataPage);
 
           return pageButton;
         }
@@ -1201,7 +1481,7 @@ class AgGrid {
 
         paginationLabelsContainer.className = 'ag-pagination-labels-container';
 
-        paginationLabelsContainer.innerText = `1 - ${pData.options?.paginations?.rows?.pagination} de ${pData.model?.data?.length || 0}`;
+        paginationLabelsContainer.innerText = `1 - ${data.options?.paginations?.rows?.pagination} de ${data.model?.data?.length || 0}`;
 
         paginationFooterContainer.appendChild(paginationLabelsContainer);
 
@@ -1226,7 +1506,7 @@ class AgGrid {
 
         paginationPagesContainer.innerHTML += '<span class="ag-previous-pages-button-etc ag-u-hidden">...</span>';
 
-        for (i = 1; i <= Math.ceil(pData.model.data.length / pData.options.paginations.rows.pagination); i++) {
+        for (i = 1; i <= Math.ceil(data.model.data.length / data.options.paginations.rows.pagination); i++) {
           pageButton = buildPageButton('', String(i), i);
           pageButton.classList.add('ag-select-page-button');
 
@@ -1262,25 +1542,25 @@ class AgGrid {
 
         return fragment;
       },
-      addEventsListenersToPaginationButtons: (pStaticId) => {
+      addEventsListenersToPaginationButtons: (staticId, data = null) => {
         let renderedColumns;
 
-        let firstPageButton    = document.querySelector(`#${pStaticId} .ag-first-page-button`);
-        let previousPageButton = document.querySelector(`#${pStaticId} .ag-previous-page-button`);
+        let firstPageButton    = document.querySelector(`#${staticId} .ag-first-page-button`);
+        let previousPageButton = document.querySelector(`#${staticId} .ag-previous-page-button`);
 
-        let selectPageButtons  = document.querySelectorAll(`#${pStaticId} .ag-select-page-button`);
+        let selectPageButtons  = document.querySelectorAll(`#${staticId} .ag-select-page-button`);
 
-        let nextPageButton     = document.querySelector(`#${pStaticId} .ag-next-page-button`);
-        let lastPageButton     = document.querySelector(`#${pStaticId} .ag-last-page-button`);
+        let nextPageButton     = document.querySelector(`#${staticId} .ag-next-page-button`);
+        let lastPageButton     = document.querySelector(`#${staticId} .ag-last-page-button`);
 
         firstPageButton?.addEventListener('click', () => {
           this._agBody.rowsContainer.innerHTML = '';
 
           let offset     = 0;
-          let pagination = this._data.options.paginations.rows.pagination;
+          let pagination = data.options.paginations.rows.pagination;
 
           try {
-            this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination-1);
+            this.buildAGBodyRow(this._agBody.rowsContainer, data, offset, pagination-1);
           } catch (error) {
             this._utils.message.clearMessages();
             this._utils.message.showErrorMessage('Falha ao acessar a primeira página da grade');
@@ -1290,55 +1570,55 @@ class AgGrid {
             return;
           }
 
-          document.querySelectorAll(`#${pStaticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
+          document.querySelectorAll(`#${staticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
             selectPageButton.classList.add('ag-u-hidden');
           });
 
           for (let i = offset; i <= pagination -1; i++) {
-            document.querySelectorAll(`#${pStaticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
+            document.querySelectorAll(`#${staticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
           }
 
-          document.querySelector(`#${pStaticId} .ag-selected-page-button`)?.classList.remove('ag-selected-page-button');
+          document.querySelector(`#${staticId} .ag-selected-page-button`)?.classList.remove('ag-selected-page-button');
 
           selectPageButtons[0].classList.add('ag-selected-page-button');
 
-          if (selectPageButtons.length > 5) document.querySelector(`#${pStaticId} .ag-next-pages-button-etc.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+          if (selectPageButtons.length > 5) document.querySelector(`#${staticId} .ag-next-pages-button-etc.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
 
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-first-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-previous-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-first-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-previous-page-button:not(.ag-u-hidden)`)?.classList.toggle('ag-u-hidden');
 
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-next-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-last-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-next-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-last-page-button.ag-u-hidden`)?.classList.toggle('ag-u-hidden');
         
-          document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`).classList.add('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-previous-pages-button-etc`).classList.add('ag-u-hidden');
 
-          this._data.options.paginations.rows.page = 1;
+          data.options.paginations.rows.page = 1;
 
-          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
+          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(staticId);
         
         });
 
         previousPageButton?.addEventListener('click', () => {
-          let page = Number(document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
+          let page = Number(document.querySelector(`#${staticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
           
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button[data-page="${page-1}"]`)?.dispatchEvent(new Event('click'));
+          document.querySelector(`#${staticId} .ag-page-btn.ag-select-page-button[data-page="${page-1}"]`)?.dispatchEvent(new Event('click'));
         });
 
         selectPageButtons.forEach((selectPageButton) => {
           selectPageButton?.addEventListener('click', (event) => {
             const clickedIndex = Array.from(selectPageButtons).indexOf(event.currentTarget);
 
-            renderedColumns = document.querySelectorAll(`#${pStaticId } .ag-col-header`)
+            renderedColumns = document.querySelectorAll(`#${staticId} .ag-col-header`)
 
             this._agBody.rowsContainer.innerHTML = '';
 
             let page       = parseInt(event.currentTarget.getAttribute('data-page'));
-            let pagination = this._data.options.paginations.rows.pagination;
+            let pagination = data.options.paginations.rows.pagination;
 
             let offset = (page - 1) * pagination;
 
             try {
-              this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination-1);
+              this.buildAGBodyRow(this._agBody.rowsContainer, data, offset, pagination-1);
             } catch (error) {
               this._utils.message.clearMessages();
               this._utils.message.showErrorMessage('Falha ao acessar página');
@@ -1346,7 +1626,7 @@ class AgGrid {
               console.error(error);
             }
 
-            document.querySelectorAll(`#${pStaticId} .ag-selected-page-button`).forEach((selectedPageButton) => {
+            document.querySelectorAll(`#${staticId} .ag-selected-page-button`).forEach((selectedPageButton) => {
               selectedPageButton.classList.remove('ag-selected-page-button');
             });
 
@@ -1395,53 +1675,53 @@ class AgGrid {
               previousPageButton?.classList.remove('ag-u-hidden');
               firstPageButton?.classList.remove('ag-u-hidden');
 
-              document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
+              document.querySelector(`#${staticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
             }
 
             if (!selectPageButtons[clickedIndex+1] || !selectPageButtons[clickedIndex+2] || !selectPageButtons[clickedIndex+3]) {
               nextPageButton?.classList.add('ag-u-hidden');
               lastPageButton?.classList.add('ag-u-hidden');
 
-              document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
+              document.querySelector(`#${staticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
             }         
 
             if (showNextAndLastPageButton) {
               nextPageButton?.classList.remove('ag-u-hidden');
               lastPageButton?.classList.remove('ag-u-hidden');
 
-              document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.remove('ag-u-hidden');
+              document.querySelector(`#${staticId} .ag-next-pages-button-etc`)?.classList.remove('ag-u-hidden');
             }
 
             if (!selectPageButtons[clickedIndex-1] || !selectPageButtons[clickedIndex-2] || !selectPageButtons[clickedIndex-3]) {
               previousPageButton?.classList.add('ag-u-hidden');
               firstPageButton?.classList.add('ag-u-hidden');
 
-              document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.add('ag-u-hidden');
+              document.querySelector(`#${staticId} .ag-previous-pages-button-etc`)?.classList.add('ag-u-hidden');
             }
 
             this._data.options.paginations.rows.page = Number(event.currentTarget.getAttribute('data-page'));
 
-            this._gridUtils.setAutoResize(pStaticId);
+            this._gridUtils.setAutoResize(staticId);
             this._utils.event.triggerWindowResize();
 
-            this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
+            this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(staticId);
           });
         });
 
         nextPageButton?.addEventListener('click', () => {
-          let page = Number(document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
+          let page = Number(document.querySelector(`#${staticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`)?.getAttribute('data-page'));
           
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button[data-page="${page+1}"]`)?.dispatchEvent(new Event('click'));
+          document.querySelector(`#${staticId} .ag-page-btn.ag-select-page-button[data-page="${page+1}"]`)?.dispatchEvent(new Event('click'));
         });
 
         lastPageButton?.addEventListener('click', () => {
           this._agBody.rowsContainer.innerHTML = '';
 
-          let offset     = this._data.model.data.length - this._data.options.paginations.rows.pagination;
-          let pagination = this._data.options.paginations.rows.pagination;
+          let offset     = data.model.data.length - data.options.paginations.rows.pagination;
+          let pagination = data.options.paginations.rows.pagination;
 
           try {
-            this.buildAGBodyRow(this._agBody.rowsContainer, this._data, offset, pagination);
+            this.buildAGBodyRow(this._agBody.rowsContainer, data, offset, pagination);
           } catch (error) {
             this._utils.message.clearMessages();
             this._utils.message.showErrorMessage('Falha ao acessar a ultima página da grade');
@@ -1451,46 +1731,46 @@ class AgGrid {
             return;
           }
 
-          document.querySelectorAll(`#${pStaticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
+          document.querySelectorAll(`#${staticId} .ag-page-btn.ag-select-page-button:not(.ag-u-hidden)`)?.forEach((selectPageButton) => {
             selectPageButton.classList.add('ag-u-hidden');
           });
 
           let offsetSelectPageButtons = selectPageButtons.length - 5;
 
           for (let i = offsetSelectPageButtons; i <= selectPageButtons.length; i++) {
-            document.querySelectorAll(`#${pStaticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
+            document.querySelectorAll(`#${staticId} .ag-select-page-button`)[i]?.classList.remove('ag-u-hidden');
           }
 
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`).classList.remove('ag-selected-page-button');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-select-page-button.ag-selected-page-button`).classList.remove('ag-selected-page-button');
 
           selectPageButtons[selectPageButtons.length -1]?.classList.add('ag-selected-page-button');
 
-          document.querySelector(`#${pStaticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
-          document.querySelector(`#${pStaticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-previous-pages-button-etc`)?.classList.remove('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-next-pages-button-etc`)?.classList.add('ag-u-hidden');
 
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-first-page-button`)?.classList.remove('ag-u-hidden');
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-previous-page-button`)?.classList.remove('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-first-page-button`)?.classList.remove('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-previous-page-button`)?.classList.remove('ag-u-hidden');
           
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-next-page-button`)?.classList.add('ag-u-hidden');
-          document.querySelector(`#${pStaticId} .ag-page-btn.ag-last-page-button`)?.classList.add('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-next-page-button`)?.classList.add('ag-u-hidden');
+          document.querySelector(`#${staticId} .ag-page-btn.ag-last-page-button`)?.classList.add('ag-u-hidden');
         
-          this._data.options.paginations.rows.page = selectPageButtons.length;
+          data.options.paginations.rows.page = selectPageButtons.length;
 
-          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(pStaticId);
+          this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(staticId);
         });
       },
-      setPaginationLabel: (pStaticId, pOffset, pPagination) => {
-        let paginationLabelsContainer = document.querySelector(`#${pStaticId} .ag-pagination-labels-container`);
+      setPaginationLabel: (staticId, data, offset, pagination) => {
+        let paginationLabelsContainer = document.querySelector(`#${staticId} .ag-pagination-labels-container`);
 
-        if (paginationLabelsContainer) paginationLabelsContainer.innerText = `${pOffset+1} - ${pPagination} de ${this._data.model.data.length || 0}`;
+        if (paginationLabelsContainer) paginationLabelsContainer.innerText = `${offset+1} - ${pagination} de ${data.model.data.length || 0}`;
       }
     },
-    makeLinkURLRequest: async (pApplication = apex.item('pFlowId').getValue(), pPage = apex.item('pFlowStepId').getValue(), pItems = '', pValues = '') => {
+    makeLinkURLRequest: async (application = apex.item('pFlowId').getValue(), page = apex.item('pFlowStepId').getValue(), items = '', values = '') => {
       const jsonValue = {
-        "application"  : pApplication,
-        "page"         : pPage,
-        "items"        : pItems,
-        "values"       : pValues
+        "application"  : application,
+        "page"         : page,
+        "items"        : items,
+        "values"       : values
       };
 
       return new Promise((resolve, reject) => {
@@ -1523,7 +1803,7 @@ class AgGrid {
         );
       });
     },
-    setResizableColumn: (pStaticId) => {
+    setResizableColumn: (staticId) => {
       const applyStickLeft = this._gridUtils.columnUtils.frozenColumn.applyStickyLeft;
 
       $('.ag-col-resizable').each(function() {
@@ -1542,12 +1822,95 @@ class AgGrid {
 
             $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
 
-            applyStickLeft(pStaticId);
+            applyStickLeft(staticId);
           }
         });
       });
     }
   }
+}
+
+class ExportReport {
+  _workbook;
+
+  _utils;
+
+  constructor() {
+    this._workbook = new ExcelJS.Workbook();
+
+    this._utils = new Utils;
+  }
+
+  /**
+  *  @Param filename: stirng
+  *  @Param data: { worksheetName: string, columns: Object, rows: Object }
+  */
+
+  async exportXLSX(filename, data) {
+    const worksheet = this._workbook.addWorksheet(data.worksheetName);
+
+    worksheet.columns = data.columns;
+
+    worksheet.getRow(1).font = { bold: true }
+
+    Object.keys(data.columns).forEach((key, i) => {
+      worksheet.getRow(1).getCell(i+1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFEEEEEE" }
+      };
+    });
+
+    data.rows.forEach((rowValue) => {
+      const { custom, ...row } = rowValue;
+
+      worksheet.addRow(row);
+    });
+
+    for(let i = 1; i <= (data.rows.length+1); i++) {
+      data.columns.forEach((column, j) => {
+        worksheet.getRow(i).getCell(j+1).alignment = data.custom[j].alignment;
+
+        worksheet.getRow(i).getCell(j+1).border = {
+          top: {
+            style: "thin",
+            color: { argb: "FF000000" }
+          },
+          left: {
+            style: "thin",
+            color: { argb: "FF000000" }
+          },
+          bottom: {
+            style: "thin",
+            color: { argb: "FF000000" }
+          },
+          right: {
+            style: "thin",
+            color: { argb: "FF000000" }
+          }
+        }
+      });
+    }
+
+    // Filtros nos headers da colunas. Similar ao .xlsx que o APEX gera
+    worksheet.autoFilter = {
+      from: "A1",
+      to: {
+        row: 1,
+        column: data.columns.length
+      }
+    }
+
+    const buffer = await this._workbook.xlsx.writeBuffer();
+
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  
+    this._utils.link.downloadBlob(blob, `${filename}.xlsx`);
+
+    this._workbook = new ExcelJS.Workbook();
+  }
+
+
 }
 
 class Utils {
@@ -1572,20 +1935,24 @@ class Utils {
     },
   };
 
-  escapeHtml = (pValue) => {
-      // (typeof rowColumnData.value == 'string') ? apex.util.escapeHTML(pValue) : pValue
+  dev = {
+    isDevMode: () => {
+      return (!!document.getElementById('apexDevToolbar'));
+    }
+  }
 
-    return (pValue) ? apex.util.escapeHTML(String(pValue)) : '';
+  escapeHtml = (value) => {
+    return (value) ? apex.util.escapeHTML(String(value)) : '';
   }
 
   elements = {
-    getElement: (pTarget) => {
-      if (typeof pTarget == 'string') {
-        return document.querySelector(pTarget);
+    getElement: (target) => {
+      if (typeof target == 'string') {
+        return document.querySelector(target);
       }
 
-      if (pTarget instanceof Element) {
-        return pTarget
+      if (target instanceof Element) {
+        return target
       }
 
       return null;
@@ -1597,36 +1964,90 @@ class Utils {
     clearMessages: () => {
       apex.message.clearErrors();
     },
-    showErrorMessage: (pMessage) => {
+    showErrorMessage: (message) => {
       apex.message.showErrors(
         {
           "type": apex.message.TYPE.ERROR,
           "location": ["page"],
-          "message": pMessage,
+          "message": message,
           "unsafe": true,
         }
       );
     }
   };
 
+  modal = {
+    callModal: ({ 
+      modalId = this.random.getRandomId(),
+      modalTitle,
+      content,
+      modalHeight,
+      modalWidth,
+      modalButtons,
+      closeCallback
+    }) => {
+      const modalContainer = document.createElement('div');
+
+      const {  } = modalButtons;
+      
+      modalContainer.className = 'ag-modal-content';
+
+      modalContainer.setAttribute('id', modalId);
+      modalContainer.setAttribute('title', modalTitle);
+
+      const contentElement = this.elements.getElement(content);
+
+      if (contentElement) modalContainer.appendChild(contentElement);
+
+      document.querySelector('body').appendChild(modalContainer);
+
+      const modalButtonsJSON = [];
+
+      modalButtons.forEach((modalButton) => {
+        modalButtonsJSON.push({
+          class: modalButton.class,
+          style: modalButton.style,
+          text: modalButton.text,
+          click: function () {
+            modalButton.click($(this));
+          }
+        })
+      });
+
+      const modal = $(modalContainer).dialog({
+        autoOpen: false,
+        minHeight: modalHeight,
+        height: modalHeight,
+        minWidth: modalWidth,
+        width: modalWidth,
+        resizable: false,
+        modal: true,
+        buttons: modalButtonsJSON,
+        close: closeCallback
+      });
+
+      modal.dialog("open");
+    }
+  }
+
   popup = {
     /**
     *  @Param pElement:     { HTMLElement | String } 
-    *  @Param pContentList: { Array & Object }
-    *  @Param pElementId:   { Static ID }
+    *  @Param contentList: { Array & Object }
+    *  @Param elementId:   { Static ID }
     */
-    calloutPopup: (pStaticId, pElement, pContentLists = [], pElementId = this.random.getRandomId()) => {
+    calloutPopup: (staticId, pElement, contentLists = [], elementId = this.random.getRandomId()) => {
       let element = this.elements.getElement(pElement);
 
       if (!element) return;
 
-      if (!document.querySelector(`.ag-popup-frame-container[data-id="${pElementId}"]`)) {
+      if (!document.querySelector(`.ag-popup-frame-container[data-id="${elementId}"]`)) {
         let elementBoundingClientRect = pElement.getBoundingClientRect();
         let popupFrame = document.createElement('div');
       
         popupFrame.className = 'ag-popup-frame-container';
       
-        popupFrame.setAttribute('data-id', pElementId);
+        popupFrame.setAttribute('data-id', elementId);
 
         // if (pContent) popupFrame.innerHTML = pContent;
         let contentListContainer;
@@ -1638,7 +2059,7 @@ class Utils {
 
         contentListContainer.className = 'ag-popup-list'
 
-        pContentLists.forEach((pContentList) => {
+        contentLists.forEach((pContentList) => {
           if (pContentList.type ?? 'item' == 'item') {
             contentListItem = document.createElement('div');
 
@@ -1686,8 +2107,8 @@ class Utils {
 
         setTimeout(() => {
           document.addEventListener('click', () => {
-            document.querySelectorAll(`#${pStaticId} .ag-popup-item`).forEach((agPopupItem, index) => {
-              agPopupItem.removeEventListener('click', pContentLists[index].callback);
+            document.querySelectorAll(`#${staticId} .ag-popup-item`).forEach((agPopupItem, index) => {
+              agPopupItem.removeEventListener('click', contentLists[index].callback);
             });
 
             popupFrame.remove();
@@ -1705,9 +2126,9 @@ class Utils {
 
   json = 
   {
-    parseSafe: (pJSON) => {
+    parseSafe: (json) => {
       try {
-        return JSON.parse(pJSON);
+        return JSON.parse(json);
       } catch (err) {
         this.message.clearMessages();
 
@@ -1745,8 +2166,8 @@ class Utils {
     reduceHexOpacity: (hexColor, opacity = '5%') => {
       return `rgba(${parseInt(hexColor.substr(1, 2), 16)}, ${parseInt(hexColor.substr(3, 2), 16)}, ${parseInt(hexColor.substr(5, 2), 16)}, ${opacity})`;
     },
-    getTemplateColor: (pTemplateType) => {
-      return this._templateColorType[String(pTemplateType).toUpperCase()];
+    getTemplateColor: (templateType) => {
+      return this._templateColorType[String(templateType).toUpperCase()];
     }
   };
   
@@ -1755,4 +2176,15 @@ class Utils {
       window.dispatchEvent(new Event('resize'));
     }
   };
+
+  link = {
+    downloadBlob: (blob, filaName) => {
+      const link = document.createElement('a');
+
+      link.href = URL.createObjectURL(blob);
+      link.download = filaName;
+      link.click();
+    }
+  }
+
 }

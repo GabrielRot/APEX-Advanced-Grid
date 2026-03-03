@@ -8,24 +8,39 @@ procedure p_render( p_plugin in            apex_plugin.t_plugin
   v_page_items_to_submit         varchar2(4000) := p_region.attributes.get_varchar2('ag_page_items_to_submit');
 
   c_static_id constant varchar2(4000) := apex_escape.html_attribute(p_region.static_id);
+
+  c_name constant varchar2(4000) := apex_escape.html_attribute(p_region.name);
 begin
   apex_css.add_file( p_name      => 'styles.min'
-                   , p_directory => p_plugin.file_prefix
+                   , p_directory => p_plugin.file_prefix || 'styles/'
                    , p_version   => null
-                   , p_key       => 'csagstylesource'
+                   , p_key       => 'agstylesource'
                    );
 
-  apex_javascript.add_library( p_name      => 'scripts.min'
-                             , p_directory => p_plugin.file_prefix
+  apex_javascript.add_library( p_name      => 'exceljs.min'
+                             , p_directory => p_plugin.file_prefix || 'libs/'
                              , p_version   => null
-                             , p_key       => 'csagscriptsource'
+                             , p_key       => 'agexceljslib'
                              );
+
+  apex_javascript.add_library( p_name      => 'scripts.min'
+                             , p_directory => p_plugin.file_prefix || 'scripts/'
+                             , p_version   => null
+                             , p_key       => 'agscriptsource'
+                             );
+
+  -- apex_javascript.add_library( p_name      => 'ag-grid-utils.min'
+  --                            , p_directory => p_plugin.file_prefix || 'scripts/'
+  --                            , p_version   => null
+  --                            , p_key       => 'agutils'
+  --                            );
 
   sys.htp.p('<div id="' || apex_plugin_util.escape(c_static_id, true) || '"></div>');
 
   apex_javascript.add_onload_code('
     const csAG' || replace(apex_plugin_util.escape(c_static_id, true), ' ', '_') || ' = new AgGrid(' || 
       apex_javascript.add_value(c_static_id, true) ||
+      apex_javascript.add_value(c_name, true) ||
       apex_javascript.add_value(apex_plugin.get_ajax_identifier, true) ||
       apex_javascript.add_value(v_page_items_to_submit, false) ||
   ')');
@@ -74,7 +89,7 @@ begin
   
     apex_json.open_object;
     
-    apex_json.write('data', vc_json_return);
+    apex_json.write_raw('data', vc_json_return);
     apex_json.write('message', 'JSON data fetched successfully');
     apex_json.write('success', true);
   
