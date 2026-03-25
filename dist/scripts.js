@@ -304,7 +304,9 @@ class AgGrid {
 
         columnHeaderValue.style.textAlign = columnOption.alignment.toLowerCase() || 'start';
 
-        columnHeaderValue.innerHTML = columnOption.header;
+        columnHeaderValue.setAttribute('title', this._utils.escapeHtml(columnOption.header));
+
+        columnHeaderValue.innerHTML = this._utils.escapeHtml(columnOption.header);
 
         columnHeader.appendChild(tradeColumnSequence);
 
@@ -491,6 +493,10 @@ class AgGrid {
       if (!this._data.options.toolbar.searchField) this._data.options.toolbar.searchField = {}
 
       this._data.options.toolbar.searchField.showSearchField = this._data.options.toolbar.searchField.showSearchField ?? true;
+
+      this._data.options.toolbar.searchField.ignoreCaseSensitive = this._data.options.toolbar.searchField.ignoreCaseSensitive ?? true;
+
+      this._data.options.toolbar.searchField.searchFor = this._data.options.toolbar.searchField.searchFor ?? 'all';
 
       if (!this._data.options.toolbar.actions) this._data.options.toolbar.actions = {};
 
@@ -754,6 +760,9 @@ class AgGrid {
         return true;
       },
       validateActionsButton: (data) => {
+        data.options.toolbar.actions.showActionsButton  = data.options.toolbar.actions.showActionsButton  ?? true
+        data.options.toolbar.actions.showDownloadReport = data.options.toolbar.actions.showDownloadReport ?? true;
+
         if (!data.options.toolbar.actions.showActionsButton) return false;
 
         if (!data.options.toolbar.actions.showDownloadReport) return false;
@@ -775,14 +784,32 @@ class AgGrid {
           }
           
           if (searchedValue  != '') {
+            let searchedData;
+
+            const ignoreCaseSensitive = this._data.options.toolbar.searchField.ignoreCaseSensitive;
+
+            if (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == 'ALL') {
+              searchedData = this._data?.model?.data.filter(row => {       
+                                return Object.values(row).some((column) => {
+                                  return (ignoreCaseSensitive) 
+                                    ? String(column.value).toLowerCase().includes(searchedValue) 
+                                    : String(column.value).includes(searchedValue)
+                                })
+                              })
+            } else {
+              let searchKey = this._data.options.toolbar.searchField.searchFor;
+
+              searchedData = this._data?.model?.data.filter(row => {
+                return (ignoreCaseSensitive) 
+                  ? String(row[searchKey].value).toLowerCase().includes(searchedValue)
+                  : String(row[searchKey].value).includes(searchedValue)
+              })
+            }
+
             const filteredValue = {
               "options": this._data?.options,
               "model": {
-                "data": this._data?.model?.data.filter(row => {       
-                          return Object.values(row).some((column) => {
-                            return String(column.value).toLowerCase().includes(searchedValue)
-                          })
-                        })
+                "data": searchedData
               }
             }
 
@@ -815,23 +842,69 @@ class AgGrid {
         });
       },
       createSearchField: (staticId) => {
+        const callSarchDropdownButtonPopup = (event) => {
+          const popupConfig = [];
+
+          const selectedIcon = 'fa-dot-circle-o';
+
+          popupConfig.push({
+            icon: (!this._data.options.toolbar.searchField.ignoreCaseSensitive) && "fa-check-circle-o",
+            label: "Distinção entre miúsculas e minúsculas",
+            callback: () => this._data.options.toolbar.searchField.ignoreCaseSensitive = !this._data.options.toolbar.searchField.ignoreCaseSensitive
+          });
+
+          popupConfig.push({
+            type: "divider"
+          });
+
+          const popupItemAllColumnsLabel = "Todas ás colunas de texto"; 
+
+          popupConfig.push({
+            icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == 'ALL') && "fa-dot-circle-o",
+            label: popupItemAllColumnsLabel,
+            callback: () => {
+              const searchInput = document.querySelector(`#ag-toolbar-input-${staticId}`);
+
+              if (searchInput) searchInput.setAttribute('placeholder', `Pesquisar: ${popupItemAllColumnsLabel}`);
+
+              this._data.options.toolbar.searchField.searchFor = 'all';
+            }
+          });
+
+          const columnsKeys = Object.keys(this._data.options.columns);
+
+          if (columnsKeys.length > 0) {
+            
+            
+            columnsKeys.forEach((columnKey) => {
+              const columnData = this._data.options.columns[columnKey];
+
+              popupConfig.push({
+                icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == String(columnKey).toUpperCase()) && "fa-dot-circle-o",
+                label: columnData.header,
+                callback: () => {
+                  const searchInput = document.querySelector(`#ag-toolbar-input-${staticId}`);
+
+                  if (searchInput) searchInput.setAttribute('placeholder', `Pesquisar: ${this._utils.escapeHtml(columnData.header)}`);
+
+                  this._data.options.toolbar.searchField.searchFor = columnKey;
+                }
+              });
+            });
+          };
+
+          this._utils.popup.calloutPopup(staticId, event.target.closest('.ag-toolbar-search-input-icon-container'), popupConfig);
+        }
+
         let toolbarSearchFieldInputContainer = document.createElement('div');
 
         toolbarSearchFieldInputContainer.className = 'ag-toolbar-search-field-input-container';
-
-        let toolbarSearchInputIconContainer = document.createElement('div');
-
-        toolbarSearchInputIconContainer.className = 'ag-toolbar-search-input-icon-container';
-
-        let toolbarSearchIcon = document.createElement('span');
-
-        toolbarSearchIcon.className = 'fa fa-search';
-
-        toolbarSearchIcon.style.fontSize = 'inherit';
-
-        toolbarSearchInputIconContainer.appendChild(toolbarSearchIcon)
     
-        toolbarSearchFieldInputContainer.appendChild(toolbarSearchInputIconContainer);
+        const dropdownSearchButton = this._gridUtils.toolbarUtils.createDropdownSearchButton();
+
+        dropdownSearchButton.addEventListener('click', callSarchDropdownButtonPopup);
+
+        toolbarSearchFieldInputContainer.appendChild(dropdownSearchButton);
 
         let toolbarSearchInputContainer = document.createElement('div');
 
@@ -843,7 +916,13 @@ class AgGrid {
         
         toolbarSearchInput.setAttribute('type', 'text');
 
-        toolbarSearchInput.setAttribute('placeholder', 'Pesquisar ...');
+        const searchFor = this._data.options.toolbar.searchField.searchFor;
+
+        toolbarSearchInput.setAttribute('placeholder', `Pesquisar: ${
+          (String(searchFor).toUpperCase() == 'ALL')
+            ? 'Todas ás colunas de texto'
+            : this.data.columns[searchFor]?.header
+        }`);
 
         toolbarSearchInputContainer.appendChild(toolbarSearchInput);
 
@@ -852,6 +931,29 @@ class AgGrid {
         toolbarSearchFieldInputContainer.appendChild(toolbarSearchInputContainer);
 
         return toolbarSearchFieldInputContainer;
+      },
+      createDropdownSearchButton: () => {
+        const toolbarSearchInputIconContainer = document.createElement('div');
+
+        toolbarSearchInputIconContainer.className = 'ag-toolbar-search-input-icon-container';
+
+        const toolbarSearchIcon = document.createElement('span');
+
+        toolbarSearchIcon.className = 'fa fa-search';
+
+        toolbarSearchIcon.style.fontSize = 'inherit';
+
+        toolbarSearchInputIconContainer.appendChild(toolbarSearchIcon);
+
+        const toolbarSearchDropdownIcon = document.createElement('div');
+
+        toolbarSearchDropdownIcon.className = 'fa fa-chevron-down';
+
+        toolbarSearchDropdownIcon.style.fontSize = '10px';
+
+        toolbarSearchInputIconContainer.appendChild(toolbarSearchDropdownIcon);
+
+        return toolbarSearchInputIconContainer;
       },
       addActionsButtonEventListener: (staticId, pElement) => {
         const createExportationType = (icon, label, type, selected = false) => {
@@ -949,7 +1051,7 @@ class AgGrid {
               let rowValue = {}
 
               keys.forEach((key) => {
-                rowValue[key] = String(row[key].value);
+                rowValue[key] = String(row[key].value ?? '');
               });
 
               xlsxData.rows.push(rowValue);
@@ -1289,7 +1391,7 @@ class AgGrid {
 
             this._labelCell.className = 'ag-label-cell';
 
-            this._labelCell.innerText = label || '';
+            this._labelCell.innerHTML = label || '';
 
             return this._labelCell;
           }
@@ -1942,7 +2044,7 @@ class Utils {
   }
 
   escapeHtml = (value) => {
-    return (value) ? apex.util.escapeHTML(String(value)) : '';
+    return ((String(value) != '') && (value !== undefined) && (value !== null)) ? apex.util.escapeHTML(String(value)) : '';
   }
 
   elements = {
@@ -2059,8 +2161,10 @@ class Utils {
 
         contentListContainer.className = 'ag-popup-list'
 
-        contentLists.forEach((pContentList) => {
-          if (pContentList.type ?? 'item' == 'item') {
+        console.log('contentLists', contentLists);
+
+        contentLists.forEach((contentList) => {
+          if ((contentList.type ?? 'item') == 'item') {
             contentListItem = document.createElement('div');
 
             contentListItem.classList.add('ag-popup-item');
@@ -2071,7 +2175,7 @@ class Utils {
 
             contentListItemIcon.innerHTML = '<span></span>';
 
-            contentListItemIcon.querySelector('span').className = `fa ${pContentList.icon}`;
+            contentListItemIcon.querySelector('span').className = `fa ${contentList.icon}`;
 
             contentListItemLabel = document.createElement('div');
 
@@ -2079,16 +2183,22 @@ class Utils {
 
             contentListItemLabel.innerHTML = '<span></span>';
 
-            contentListItemLabel.querySelector('span').innerText = pContentList.label;
+            contentListItemLabel.querySelector('span').innerText = contentList.label;
 
             contentListItem.appendChild(contentListItemIcon);
             contentListItem.appendChild(contentListItemLabel);
 
-            contentListItem.addEventListener('click', pContentList.callback);
+            contentListItem.addEventListener('click', contentList.callback);
 
             contentListContainer.appendChild(contentListItem);
           
             // contentListItem = '';
+          } else if (contentList.type == 'divider') {
+            const contentListDivider = document.createElement('div');
+
+            contentListDivider.className = 'ag-popup-divider';
+
+            contentListContainer.appendChild(contentListDivider);
           }
 
           popupFrame.appendChild(contentListContainer);

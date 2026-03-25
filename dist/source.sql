@@ -9,7 +9,7 @@ procedure p_render( p_plugin in            apex_plugin.t_plugin
 
   c_static_id constant varchar2(4000) := apex_escape.html_attribute(p_region.static_id);
 
-  c_name constant varchar2(4000) := apex_escape.html_attribute(p_region.name);
+  c_name constant varchar2(4000) := p_region.name;
 begin
   apex_css.add_file( p_name      => 'styles.min'
                    , p_directory => p_plugin.file_prefix || 'styles/'
