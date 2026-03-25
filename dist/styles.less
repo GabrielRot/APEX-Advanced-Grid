@@ -17,6 +17,7 @@
 @ag-badge-column-container-ultra-slim-sizes: 90%;
 
 @ag-button-transition: background-color 0.3s ease;
+@ag-button-color: #646464;
 
 .t-Region-body:has(.ag-container) {
   overflow: unset !important;
@@ -124,7 +125,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #9EA0A7;
+      color: @ag-button-color;
       font-weight: 600;
       width: 34px;
       border-right-style: solid;
@@ -134,6 +135,8 @@
       border-top-left-radius: @search-field-border-radius;
       border-bottom-left-radius: @search-field-border-radius;
       background-color: @background-color;
+      padding-left: 6px;
+      padding-right: 6px;
       
       transition: @ag-button-transition;
       cursor: pointer;
@@ -173,6 +176,7 @@
     background-color: @actions-button-background-color;
     gap: 3px;
     transition: @ag-button-transition;
+    color: @ag-button-color;
 
     span {
       &:last-of-type {
@@ -501,7 +505,7 @@
     padding-left: 12px;
     padding-top: 6px;
     padding-bottom: 6px;
-    
+    color: @ag-button-color;
   }
 
   .ag-pagination-pages-container {
@@ -523,7 +527,7 @@
       border-radius: 50%;
       min-height: 20px;
       min-width: 20px;
-      // color: #CECECE;
+      color: @ag-button-color;
 
       transition: @ag-button-transition;
 
@@ -568,7 +572,7 @@
   border-radius: 0.5rem;
   pointer-events: all;
   min-width: 150px;
-  max-height: calc(100vh - 20px);
+  max-height: calc(100vh - 70%);
   overflow-y: auto;
   padding-block: 8px;
 
@@ -602,7 +606,7 @@
     cursor: pointer;
     padding: 8px;
     transition: background-color 0.1s cubic-bezier(0, 0.73, 1, 0.07);
-    color: #2B2B2B;
+    color: @ag-button-color;
 
     &:hover {
       background-color: darken(@primary-bg-color, 5%);
@@ -615,11 +619,22 @@
 
     .ag-popup-item-icon {
       display: flex;
+      position: fixed;
     }
 
     .ag-popup-item-label {
       font-size: 12px;
+      margin-left: 23px;
     }
+  }
+
+  .ag-popup-divider {
+    @ag-popup-divider-margin-spacing: 3px; 
+
+    height: 1px;
+    background-color: #F3F3F3;
+    margin-top: @ag-popup-divider-margin-spacing;
+    margin-bottom: @ag-popup-divider-margin-spacing;
   }
 }
 
