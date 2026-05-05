@@ -11,6 +11,10 @@ class AgGrid {
 
   _workbook;
 
+  
+  _agGroupColumnWrapper;
+  _agGroup;
+
   _agHeaderWrapper;
   _agHeader;
 
@@ -154,15 +158,31 @@ class AgGrid {
 
       if (this._data.options?.toolbar?.showToolbar) this.container.appendChild(this.buildAGToolbar(this.staticId, String(this._data?.options?.style?.theme ?? 'ag-slim').toLowerCase()));
 
+      this._agGroupColumnWrapper = this.buildAGGroupColumnWrapper();
+
+      this._agGroup = this.buildAGGroupColumnContainer();
+
+      this._agGroupColumnWrapper.appendChild(this._agGroup)
+
       this._agHeaderWrapper = this.buildAGHeaderWrapper();
 
       this._agHeader = this.buildAGHeaderContainer();
 
       this._agHeaderWrapper.appendChild(this._agHeader);
 
+      this.container.appendChild(this._agGroupColumnWrapper);
+
       this.container.appendChild(this._agHeaderWrapper);
 
-      this._gridUtils.columnUtils.setColumnsId();
+      this._gridUtils.columnUtils.setColumnsId(); 
+
+      if (data.options?.columnGroup && this._gridUtils.groupColumnUtils.someColumnHasGroup(data)) {
+        this._agGroup.appendChild(this.buildAGColumnGroup(
+          data,
+          this._data.options?.paginations?.columns?.offset,
+          this._data.options?.paginations?.columns?.pagination-1
+        ));
+      }
 
       this.buildAGColumnHeader(
         this._agHeader, 
@@ -194,8 +214,6 @@ class AgGrid {
         this._agBody.rowsContainer.appendChild(this._gridUtils.noDataFound.create());
       }
 
-      window.dispatchEvent(new Event('resize'));
-
       this._gridUtils.addScrollGrid(this.staticId);
 
       this._gridUtils.setAutoResize(this.staticId);
@@ -204,9 +222,13 @@ class AgGrid {
 
       this._gridUtils.columnUtils.frozenColumn.configurateFrozenColumns(this.staticId);
 
+      apex.region(this.staticId).element.on('apexaftershow', this._gridUtils.bindActions.afterShow);
+      
       // this._gridUtils.columnUtils.headerUtils.setStickyHeader(this.staticId);
 
       // this._gridUtils.columnUtils.headerUtils.setColumnPopupOptions(this.staticId);
+
+      window.dispatchEvent(new Event('resize'));
 
     } else {
       this.container.appendChild(this._gridUtils.noDataFound.create());
@@ -257,12 +279,135 @@ class AgGrid {
     return headerWrapper;
   }
 
+  buildAGGroupColumnWrapper() {
+    const columnGroupWrapper = document.createElement('div');
+
+    columnGroupWrapper.className = 'ag-group-wrapper'
+
+    return columnGroupWrapper;
+  }
+
+  buildAGGroupColumnContainer() {
+    const columnGroupContainer = document.createElement('div');
+
+    columnGroupContainer.className = 'ag-col-group-container u-flex'
+
+    return columnGroupContainer;
+  }
+
   buildAGHeaderContainer() {
     let headerContainer = document.createElement('div');
 
     headerContainer.className = 'ag-col-header-container u-flex';
 
     return headerContainer;
+  }
+
+  buildAGColumnGroup(data, offset, pagination) {
+    const fragment = document.createDocumentFragment();
+
+    const columnsKeys = Object.keys(data.options.columns);
+
+    let previousColumnGroupWasBlank = false;
+    let previousColumnGroupWasFrozen = false;
+    // let previousColumnGroupId = ''; 
+    let createNewGroup = true;
+
+    let i;
+
+    let columnsChildren = [];
+
+    let validateIndexFrozen = -1;
+
+    for (i = 0; i < columnsKeys.length; i++) {
+      const columnKey = columnsKeys[i]
+      const column = data.options?.columns[columnKey];
+
+      if (column.frozen) validateIndexFrozen = i;
+    }
+
+    // for (i = 0; i < columnsKeys.length; i++) {
+    for (i = offset; i <= (offset + pagination); i++) {
+      const columnKey = columnsKeys[i]
+      const column = data.options?.columns[columnKey];
+
+      if (!column) continue;
+      
+      const columnGroup = (data.options?.columnGroup) ? data.options?.columnGroup[column.group] ?? {} : {};
+
+      const previousColumnKey = columnsKeys[i-1];
+      const previousColumn = data.options?.columns[previousColumnKey];
+      const previousColumnGroupId = previousColumn?.group || '';
+
+      previousColumnGroupWasBlank = (previousColumnGroupId == '' && i != 0); 
+
+      if ((!columnGroup.header && !previousColumnGroupWasBlank)) {
+        // previousColumnGroupId = '';
+        columnsChildren = [];
+
+        fragment.appendChild(
+          this._gridUtils.groupColumnUtils.buildGroupColumn(
+            String(data.options?.style.theme ?? 'ag-slim').toLowerCase(),
+            false,
+            '',
+            null
+          )
+        );
+
+        previousColumnGroupWasBlank = true;
+        previousColumnGroupWasFrozen = false;
+        
+        continue;
+      } else if (!columnGroup.header) {
+        previousColumnGroupWasBlank = true;
+        previousColumnGroupWasFrozen = true;
+        
+        continue;
+      }
+
+      if ((column.group == previousColumnGroupId) && !createNewGroup) {
+        const columnGroup = fragment.querySelector(`[data-childrens="${columnsChildren.join(',')}"]`);
+
+        columnsChildren.push(columnKey);
+
+        columnGroup.setAttribute('data-childrens', columnsChildren.join(','));
+
+        if (i == validateIndexFrozen) {
+          const columnGroups = fragment.querySelectorAll('.ag-col-group-header');
+          
+          if (columnGroups.length > 0) {
+            columnGroups.forEach((columnGroup) => {
+              columnGroup.classList.add('ag-frozen-group');
+            });
+
+            columnGroups[columnGroups.length-1].classList.add('ag-frozen-group-last');
+          }
+
+          // previousColumnGroupId = '';
+          createNewGroup = true;
+          columnsChildren = [];
+        }
+
+        continue;
+      }
+
+      fragment.appendChild(this._gridUtils.groupColumnUtils.buildGroupColumn(
+        String(data.options?.style.theme ?? 'ag-slim').toLowerCase(),
+        column.frozen,
+        this._utils.escapeHtml(columnGroup.header),
+        column.group,
+        columnKey
+      ));
+
+      columnsChildren.push(columnKey);
+
+      previousColumnGroupWasFrozen = !!column.frozen;
+      previousColumnGroupWasBlank = false;
+      // previousColumnGroupId = column.group;
+      createNewGroup = false;
+    }
+
+    return fragment;
   }
 
   buildAGColumnHeader(headerContainer, data, offset, pagination) {
@@ -275,6 +420,10 @@ class AgGrid {
 
     let i;
 
+    const theme = String(data.options?.style?.theme ?? 'ag-slim').toLowerCase();
+
+    const columnHeaderHeight = (theme == 'ag-fat') ? 40 : 32;
+
     for(i = offset; i <= (offset + pagination); i++) {
       columnOption = columnsOption[i];
 
@@ -282,7 +431,20 @@ class AgGrid {
         // if (!columnOption.staticId) columnOption.staticId = this._utils.random.getRandomId();
         let columnHeader = document.createElement('div');
 
-        columnHeader.className = `ag-col-header ag-col-resizable ag-u-flex ${String(data.options?.style?.theme ?? 'ag-slim').toLowerCase()}`;
+        columnHeader.className = `ag-col-header ag-col-resizable ag-u-flex ${theme}`;
+
+        if (columnOption.styles) {
+          const borderTopWidth = 10;
+
+          const color = this._utils.color.getTemplateColor(columnOption.styles.borderTopColor).color;
+
+          columnHeader.style.borderTopColor = color;
+          columnHeader.style.borderTopWidth = `${borderTopWidth}px`;
+          columnHeader.style.borderTopStyle = 'solid';
+
+          columnHeader.style.minHeight = `${columnHeaderHeight + borderTopWidth}px`;
+          columnHeader.style.maxHeight = `${columnHeaderHeight + borderTopWidth}px`;
+        }
 
         if (columnOption.frozen) columnHeader.classList.add('ag-frozen-column');
 
@@ -482,7 +644,9 @@ class AgGrid {
           type:          column.type          ?? (typeof rowData[key].value == 'number' ? 'NUMBER' : 'VARCHAR2'),
           width:         column.width         ?? key,
           frozen:        column.frozen        ?? false,
-          readOnlyStyle: column.readOnlyStyle ?? false
+          readOnlyStyle: column.readOnlyStyle ?? false,
+          group:         column.group         ?? null,
+          styles:        column.styles        ?? null
         };
       });
 
@@ -549,7 +713,11 @@ class AgGrid {
           let columnHeaders = document.querySelectorAll(`#ag-${staticId} .ag-col-header`);
           
           for(const columnHeader of columnHeaders) {
-            document.querySelectorAll(`#ag-${staticId} .ag-cell-container[data-column="${columnHeader.getAttribute('data-column')}"]`).forEach((rowColumn) => {
+            const dataColumn = columnHeader.getAttribute('data-column');
+
+            const column = this._data.options?.columns[dataColumn];
+
+            document.querySelectorAll(`#ag-${staticId} .ag-cell-container[data-column="${dataColumn}"]`).forEach((rowColumn) => {
               rowColumn.style.width = `${columnHeader.getBoundingClientRect().width}px`;
 
               columnsWithoutResize = [...document.querySelectorAll(`#${staticId} .ag-cell-container`)].filter((column) => column.style.flex != '0 0 auto');
@@ -558,6 +726,13 @@ class AgGrid {
                 columnWithoutResize.style.flex = '0 0 auto';
               });
             });
+
+            this._gridUtils.groupColumnUtils.resizeGroupColumns(staticId);
+            this._gridUtils.footerUtils.resizePlaceholderVirtualScroll(this.staticId);
+          }
+
+          if (this._data.options?.columnGroup && this._gridUtils.groupColumnUtils.someColumnHasGroup(this._data)) {
+            this._gridUtils.groupColumnUtils.frozenGroup.applyStickyLeft(staticId);
           }
         }, 100);       
       };
@@ -600,18 +775,19 @@ class AgGrid {
 
         $(`#${this.staticId}`).on('apexrefresh', requestJSONData);
 
+      },
+      afterShow: () => {
+        window.dispatchEvent(new Event('resize'));
       }
     },
     addScrollGrid: (staticId) => {
+      const groupWrapper    = document.querySelector(`#${staticId} .ag-group-wrapper`);
       const headerWrapper   = document.querySelector(`#${staticId} .ag-header-wrapper`);
       const columnContainer = document.querySelector(`#${staticId} .ag-col-header-container`);
       const bodyWrapper     = document.querySelector(`#${staticId} .ag-body-wrapper`);
       const scroller        = document.querySelector(`#${staticId} .ag-footer-wrapper`);
 
-      let scrollerPlaceHolder = scroller.querySelector('.ag-footer-scroll');
-      let firstRowContainer   = bodyWrapper.querySelector('.ag-row-container');
-
-      if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
+      this._gridUtils.footerUtils.resizePlaceholderVirtualScroll(staticId);
       
       let data            = this._data;
       
@@ -620,6 +796,8 @@ class AgGrid {
       let columnsLength   = Object.values(columnOptions).length;
       let renderedColumns;
 
+      let buildAGColumnGroup  = this.buildAGColumnGroup.bind(this);
+      let groupContainer      = this._agGroup;
       let buildAGColumnHeader = this.buildAGColumnHeader.bind(this);
       let headerContainer     = this._agHeader;
 
@@ -639,6 +817,7 @@ class AgGrid {
       this._setHeaderContainerPositionAndPagination = () => {
         // columnContainer.style.transform = `translateX(-${scroller.scrollLeft}px)`;
 
+          groupWrapper.scrollLeft  = scroller.scrollLeft;
           headerWrapper.scrollLeft = scroller.scrollLeft;
           bodyWrapper.scrollLeft   = scroller.scrollLeft;
         
@@ -658,6 +837,8 @@ class AgGrid {
             if (offset == columnsLength) {
               offset = columnsLength-1;
             }
+            
+            groupContainer.appendChild(buildAGColumnGroup(data, offset, pagination));
 
             buildAGColumnHeader(headerContainer, data, offset, pagination);
 
@@ -674,9 +855,10 @@ class AgGrid {
               }
             });
 
-            if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
+            this._gridUtils.footerUtils.resizePlaceholderVirtualScroll(staticId);
 
             this._gridUtils.setResizableColumn(staticId);
+            this._gridUtils.groupColumnUtils.resizeGroupColumns(staticId);
           }
         }
 
@@ -849,7 +1031,7 @@ class AgGrid {
 
           popupConfig.push({
             icon: (!this._data.options.toolbar.searchField.ignoreCaseSensitive) && "fa-check-circle-o",
-            label: "Distinção entre miúsculas e minúsculas",
+            label: "Distinção entre maiúsculas e minúsculas",
             callback: () => this._data.options.toolbar.searchField.ignoreCaseSensitive = !this._data.options.toolbar.searchField.ignoreCaseSensitive
           });
 
@@ -860,7 +1042,7 @@ class AgGrid {
           const popupItemAllColumnsLabel = "Todas ás colunas de texto"; 
 
           popupConfig.push({
-            icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == 'ALL') && "fa-dot-circle-o",
+            icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == 'ALL') && selectedIcon,
             label: popupItemAllColumnsLabel,
             callback: () => {
               const searchInput = document.querySelector(`#ag-toolbar-input-${staticId}`);
@@ -880,7 +1062,7 @@ class AgGrid {
               const columnData = this._data.options.columns[columnKey];
 
               popupConfig.push({
-                icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == String(columnKey).toUpperCase()) && "fa-dot-circle-o",
+                icon: (String(this._data.options.toolbar.searchField.searchFor).toUpperCase() == String(columnKey).toUpperCase()) && selectedIcon,
                 label: columnData.header,
                 callback: () => {
                   const searchInput = document.querySelector(`#ag-toolbar-input-${staticId}`);
@@ -1015,15 +1197,32 @@ class AgGrid {
         const exportationFunctions = {
           "xlsx": () => {
 
-            let xlsxData = { worksheetName: 'Planilha1', columns: [], rows: [], custom: [] };
+            let xlsxData = { groups: [], worksheetName: 'Planilha1', columns: [], rows: [], custom: [] };
 
-            const keys = Object.keys(this._reportData?.options?.columns);
+            // const groupKeys  = Object.keys(this._reportData?.options?.columns);
+            const columnKeys = Object.keys(this._reportData?.options?.columns);
+
+            let columnGroupWidth       = 0;
+            const isColumnGroupEnabled = (this._reportData.options?.columnGroup && this._gridUtils.groupColumnUtils.someColumnHasGroup(this._reportData));
+            let columnGroupArrayIndex  = 0;
+
+            // groupKeys.forEach((groupKey) => {
+            //   const columnData = this._reportData.options.columns[]
+            // });
 
             let customValue;
-
             let columnWidth = 0;
+            let lastFrozenColumnIndex = -1;
 
-            keys.forEach((key) => {
+            columnKeys.forEach((key, i) => {
+              const columnData = this._reportData.options.columns[key];
+
+              if (columnData.frozen) lastFrozenColumnIndex = i;
+            });
+
+            if (lastFrozenColumnIndex >= 0) xlsxData.frozen = lastFrozenColumnIndex+1;
+
+            columnKeys.forEach((key, i) => {
               const columnData = this._reportData.options.columns[key];
 
               columnWidth = String(columnData.header).length * 2;
@@ -1036,6 +1235,8 @@ class AgGrid {
                 }
               );
 
+              if (isColumnGroupEnabled) xlsxData.columns[i].alignment = columnData.alignment;
+
               customValue = {};
 
               customValue.alignment = {};
@@ -1045,12 +1246,46 @@ class AgGrid {
               customValue.alignment.wrapText = true;
 
               xlsxData.custom.push(customValue);
+
+              if (isColumnGroupEnabled) {
+                const columnGroup            = this._reportData.options?.columnGroup[columnData.group] || {};
+                const columnGroupHeader      = (columnGroup.header) ? columnGroup.header : '';
+                const isColumnGroupFrozen    = (lastFrozenColumnIndex >= i);
+                const breakFrozenColumnGroup = (i == lastFrozenColumnIndex+1);
+
+                const inheritedColumnGroup       = xlsxData.groups[columnGroupArrayIndex] || {};
+                const inheritedColumnGroupHeader = (inheritedColumnGroup.header) ? inheritedColumnGroup.header : '';
+
+                const columnToMergeLetter = `${this._utils.char.getExcelColumnLetterByIndex(i)}1`
+
+                if (i == 0) {
+                  xlsxData.groups.push({ 
+                    header: columnGroupHeader,
+                    columnsToMerge: [columnToMergeLetter]
+                  });
+                } else if ((inheritedColumnGroupHeader == columnGroupHeader) && isColumnGroupFrozen) {
+                  const columnGroup = xlsxData.groups[columnGroupArrayIndex];
+
+                  columnGroup.columnsToMerge.push(columnToMergeLetter);
+                } else if ((inheritedColumnGroupHeader == columnGroupHeader) && !breakFrozenColumnGroup) {
+                  const columnGroup = xlsxData.groups[columnGroupArrayIndex];
+                  
+                  columnGroup.columnsToMerge.push(columnToMergeLetter);              
+                } else {
+                  xlsxData.groups.push({
+                    header: columnGroupHeader,
+                    columnsToMerge: [columnToMergeLetter]
+                  });
+
+                  columnGroupArrayIndex++;
+                }
+              }
             });
 
             this._reportData.model?.data.forEach((row) => {
               let rowValue = {}
 
-              keys.forEach((key) => {
+              columnKeys.forEach((key) => {
                 rowValue[key] = String(row[key].value ?? '');
               });
 
@@ -1065,7 +1300,7 @@ class AgGrid {
               downloadButton.innerHTML = `
                 <span class="fa fa-circle-2-8 fa-anim-spin"></span> Baixando...
               `;
-            }
+            };
 
             try {
               this._exportReport.exportXLSX(this.name, xlsxData);
@@ -1073,7 +1308,7 @@ class AgGrid {
               this._utils.message.clearMessages();
 
               this._utils.message.showErrorMessage(`Erro ao exportar relatório: \n${e.message}`);
-            }
+            };
           }
         }
 
@@ -1139,6 +1374,160 @@ class AgGrid {
         this._gridUtils.toolbarUtils.addActionsButtonEventListener(staticId, actionsButton);
 
         return actionsButton;
+      }
+    },
+
+    groupColumnUtils: {
+      frozenGroup: {
+        applyStickyLeft: (staticId) => {
+          let columnGroupLeft = 0;
+
+          document.querySelectorAll(`#${staticId} .ag-col-group-header.ag-frozen-group`)?.forEach((columnGroup) => {
+            columnGroup.style.left = `${columnGroupLeft}px`;
+
+            columnGroupLeft += Math.round(columnGroup.getBoundingClientRect().width);
+          });
+        },
+      },
+      getColumnsByGroup: (staticId) => {
+        const groupColumns = document.querySelectorAll(`#${staticId} .ag-col-group-header`);
+
+        let blankColumnGroupsIndex = [];
+        let i;
+
+        if (groupColumns.length > 0) {
+          for(i = 0; i < groupColumns.length; i++) {
+            let columnChildrens = [];
+            const groupColumn = groupColumns[i];
+
+            const columnGroupChildrens = groupColumn.getAttribute('data-childrens');
+            
+            if (columnGroupChildrens) {
+              columnGroupChildrens.split(',').forEach((dataChildren) => {
+                const columnChildren = document.querySelector(`#${staticId} .ag-col-header[data-column*="${dataChildren}"]`);
+
+                if (columnChildren) columnChildrens.push(columnChildren);
+              });
+            } else {
+              blankColumnGroupsIndex.push(i);
+
+              continue;
+            }
+          };
+        };
+
+        return blankColumnGroupsIndex;
+      },
+      someColumnHasGroup: (data) => {
+        return Object.values(data.options.columns).some((column) => !!column.group);
+      },
+      resizeGroupColumns: (staticId) => {
+        const groupColumns = document.querySelectorAll(`#${staticId} .ag-col-group-header`);
+
+        let blankColumnGroupsIndex = [];
+
+        let i;
+
+        if (groupColumns.length > 0) {
+          for(i = 0; i < groupColumns.length; i++) {
+            let columnChildrens = [];
+            const groupColumn = groupColumns[i];
+
+            const columnGroupChildrens = groupColumn.getAttribute('data-childrens');
+            
+            if (columnGroupChildrens) {
+              columnGroupChildrens.split(',').forEach((dataChildren) => {
+                const columnChildren = document.querySelector(`#${staticId} .ag-col-header[data-column*="${dataChildren}"]`);
+
+                if (columnChildren) columnChildrens.push(columnChildren);
+              });
+            } else {
+              blankColumnGroupsIndex.push(i);
+
+              continue;
+            }
+
+            const width = columnChildrens.reduce((width, columnChildren) => {
+              return width + columnChildren.getBoundingClientRect().width;
+            }, 0);
+
+            groupColumn.style.flex = '0 0 auto';
+            groupColumn.style.minWidth = `${width}px`;
+            groupColumn.style.width = `${width}px`;
+          };
+        }
+
+        const columnsElement = document.querySelectorAll(`#${staticId} .ag-col-header`);
+
+        const columnsWithoutPagination = Object.values(this._data.options?.columns);
+        const columnsData = columnsWithoutPagination.slice(0, columnsElement.length);
+
+        const columnsWithoutGroupsIndex = columnsData.map((column, i) => (!column.group) ? i : null).filter((i) => i !== null);
+
+        let arrayI = 0;
+
+        let columnsByGroupIntersection = [[]];
+
+        columnsWithoutGroupsIndex.forEach((value, index) => {
+          if ((
+                (columnsWithoutGroupsIndex[index-1] == value-1) && 
+                (columnsWithoutGroupsIndex[index-1] != undefined)
+              ) || 
+              index == 0) {
+            columnsByGroupIntersection[arrayI].push(value);
+          } else if ((columnsWithoutGroupsIndex[index-1] != undefined)) {
+            arrayI++;
+
+            columnsByGroupIntersection.push([]);
+
+            columnsByGroupIntersection[arrayI].push(value);
+          }
+        });
+
+        blankColumnGroupsIndex.forEach((indexColumnGroup, i) => {
+          const groupColumn = groupColumns[indexColumnGroup];
+
+          const columnsByGroup = columnsByGroupIntersection[i];
+
+          let groupColumnWidth = 0;
+
+          columnsByGroup.forEach((indexColumn) => {
+            const column = columnsElement[indexColumn];
+
+            groupColumnWidth += column.getBoundingClientRect().width;
+          });
+
+          groupColumn.style.flex = '0 0 auto';
+          groupColumn.style.minWidth = `${groupColumnWidth}px`;
+          groupColumn.style.width = `${groupColumnWidth}px`;
+        });
+      },
+      buildGroupColumn: (theme, frozen = false, header, groupId, columnChildren) => {
+        const columnGroupHeader = document.createElement('div');
+
+        columnGroupHeader.className = `ag-col-group-header ag-u-flex ${theme}`;
+
+        if (frozen) columnGroupHeader.classList.add('ag-frozen-column');
+
+        if (groupId) columnGroupHeader.setAttribute('data-id', groupId);
+
+        if (columnChildren) columnGroupHeader.setAttribute('data-childrens', columnChildren);
+
+        const columnGroupHeaderValue = document.createElement('div');
+
+        columnGroupHeaderValue.className = 'ag-col-header-content ag-col-group-header-content';
+
+        columnGroupHeaderValue.style.textAlign = 'center';
+
+        if (header) {
+          columnGroupHeaderValue.setAttribute('title', header);
+
+          columnGroupHeaderValue.innerHTML = header;
+        }
+
+        columnGroupHeader.appendChild(columnGroupHeaderValue);
+
+        return columnGroupHeader;
       }
     },
 
@@ -1272,7 +1661,12 @@ class AgGrid {
           let navbarHeight = (navbar) ? navbar.offsetHeight : 0;
 
           if (navbarHeight) {
-            document.querySelector(`#${staticId} .ag-header-wrapper`).style.top = `${navbarHeight}px`;
+            const columGroupWrapper       = document.querySelector(`#${staticId} .ag-group-wrapper`);
+            const columGroupWrapperHeight = (columGroupWrapper) ? columGroupWrapper.offsetHeight : 0;
+
+            if (columGroupWrapper) columGroupWrapper.style.top = `${navbarHeight}px`;
+            
+            document.querySelector(`#${staticId} .ag-header-wrapper`).style.top = `${navbarHeight + columGroupWrapperHeight}px`;
           }
         }
       },
@@ -1482,7 +1876,7 @@ class AgGrid {
             agFrozenColumnHeaders[agFrozenColumnHeaders.length-1].classList.add('ag-frozen-column-last');
           };
 
-        document.querySelectorAll(`#${staticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((rowContainer) => {
+          document.querySelectorAll(`#${staticId} .ag-row-container:has(.ag-frozen-column)`)?.forEach((rowContainer) => {
             agFrozenColumns = rowContainer.querySelectorAll('.ag-cell-container.ag-frozen-column');
 
             if ((agFrozenColumns.length -1) >= 0) {
@@ -1557,7 +1951,17 @@ class AgGrid {
         }
       }
     },
+
     footerUtils: {
+      resizePlaceholderVirtualScroll: (staticId) => {
+        const bodyWrapper     = document.querySelector(`#${staticId} .ag-body-wrapper`);
+        const scroller        = document.querySelector(`#${staticId} .ag-footer-wrapper`);
+
+        let scrollerPlaceHolder = scroller.querySelector('.ag-footer-scroll');
+        let firstRowContainer   = bodyWrapper.querySelector('.ag-row-container');
+
+        if (firstRowContainer) scrollerPlaceHolder.style.width = `${firstRowContainer.offsetWidth}px`;
+      },
       buildPaginationFooter: (data) => {
         function buildPageButton(icon = '', text = '', dataPage = '') {
           let pageButton = document.createElement('div');
@@ -1908,6 +2312,12 @@ class AgGrid {
     setResizableColumn: (staticId) => {
       const applyStickLeft = this._gridUtils.columnUtils.frozenColumn.applyStickyLeft;
 
+      const resizeGroupColumns = this._gridUtils.groupColumnUtils.resizeGroupColumns;
+
+      const getPagination = () => {
+        return this.options?.paginations?.columns.paginations;
+      };
+
       $('.ag-col-resizable').each(function() {
         const $header  = $(this);
         const columnId = $header.attr('id');
@@ -1925,6 +2335,10 @@ class AgGrid {
             $(`.ag-cell-container[data-column-header-id="${columnId}"]`).css({'width': `${newWidth}px`, flex: '0 0 auto'});
 
             applyStickLeft(staticId);
+
+            window.dispatchEvent(new Event('resize'));
+
+            resizeGroupColumns(staticId);
           }
         });
       });
@@ -1944,24 +2358,69 @@ class ExportReport {
   }
 
   /**
-  *  @Param filename: stirng
-  *  @Param data: { worksheetName: string, columns: Object, rows: Object }
+  *  @Param filename: string
+  *  @Param data: { worksheetName: string, groups: Array, columns: Object, rows: Object }
   */
 
   async exportXLSX(filename, data) {
+    console.log(data);
+
     const worksheet = this._workbook.addWorksheet(data.worksheetName);
+
+    const hasGroupColumn = data.groups && data.groups.length;
+    
+    const columnHeaderRowIndex = (hasGroupColumn) ? 2 : 1;
+    const rowsToFrozen         = columnHeaderRowIndex;
 
     worksheet.columns = data.columns;
 
-    worksheet.getRow(1).font = { bold: true }
+    // Moves to the row bellow
+    if (hasGroupColumn) worksheet.spliceRows(1, 0, []);
 
-    Object.keys(data.columns).forEach((key, i) => {
-      worksheet.getRow(1).getCell(i+1).fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFEEEEEE" }
+    if (hasGroupColumn) {
+      for(let i = 1; i < data.columns.length; i++) {
+        worksheet.getRow(2).getCell(i+1).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFEEEEEE" }
+        };
       };
-    });
+    }
+
+    if (hasGroupColumn) {
+      const columnGroupRow = worksheet.getRow(1);
+      const getWordsRegex  = new RegExp(/[0-9]/g);
+
+      data.groups.forEach((group) => {
+
+        const firstColumnGroupToMerge       = group.columnsToMerge[0];
+        const firstColumnGroupToMergeLetter = firstColumnGroupToMerge.replace(getWordsRegex, '');
+        const lastColumnGroupToMerge        = group.columnsToMerge[group.columnsToMerge.length-1];
+
+        columnGroupRow.getCell(firstColumnGroupToMergeLetter).value = group.header;
+
+        columnGroupRow.getCell(firstColumnGroupToMergeLetter).alignment = { horizontal: 'center', vertical: 'middle' };
+
+        group.columnsToMerge.forEach((columnToMerge) => {
+          columnGroupRow.getCell(columnToMerge.replace(getWordsRegex, '')).fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFEEEEEE" }
+          };
+        });
+
+        if (group.columnsToMerge.length > 1) worksheet.mergeCells(`${firstColumnGroupToMerge}:${lastColumnGroupToMerge}`);
+      });
+    }
+
+    worksheet.views = [
+      {
+        state: 'frozen',
+        ySplit: rowsToFrozen
+      }
+    ]
+
+    if(data.frozen) worksheet.views[0].xSplit = data.frozen;
 
     data.rows.forEach((rowValue) => {
       const { custom, ...row } = rowValue;
@@ -1969,7 +2428,9 @@ class ExportReport {
       worksheet.addRow(row);
     });
 
-    for(let i = 1; i <= (data.rows.length+1); i++) {
+    const endRowLoop = (hasGroupColumn) ? data.rows.length+2 : data.rows.length+1;
+
+    for(let i = 1; i <= endRowLoop; i++) {
       data.columns.forEach((column, j) => {
         worksheet.getRow(i).getCell(j+1).alignment = data.custom[j].alignment;
 
@@ -1994,11 +2455,11 @@ class ExportReport {
       });
     }
 
-    // Filtros nos headers da colunas. Similar ao .xlsx que o APEX gera
+    // Column header filter. Like the IG generates when exports to .xlsx
     worksheet.autoFilter = {
-      from: "A1",
+      from: `A${columnHeaderRowIndex}`,
       to: {
-        row: 1,
+        row: columnHeaderRowIndex,
         column: data.columns.length
       }
     }
@@ -2032,6 +2493,10 @@ class Utils {
       "fontColor": "#FFFFFF"
     },
     "INFO": {
+      "color": "#056AC8",
+      "fontColor": "#FFFFFF"
+    },
+    "PRIMARY": {
       "color": "#056AC8",
       "fontColor": "#FFFFFF"
     },
@@ -2161,8 +2626,6 @@ class Utils {
 
         contentListContainer.className = 'ag-popup-list'
 
-        console.log('contentLists', contentLists);
-
         contentLists.forEach((contentList) => {
           if ((contentList.type ?? 'item') == 'item') {
             contentListItem = document.createElement('div');
@@ -2277,7 +2740,9 @@ class Utils {
       return `rgba(${parseInt(hexColor.substr(1, 2), 16)}, ${parseInt(hexColor.substr(3, 2), 16)}, ${parseInt(hexColor.substr(5, 2), 16)}, ${opacity})`;
     },
     getTemplateColor: (templateType) => {
-      return this._templateColorType[String(templateType).toUpperCase()];
+      const templateColor = this._templateColorType[String(templateType).toUpperCase()];
+
+      return (templateColor ) ? templateColor : { color: templateType};
     }
   };
   
@@ -2294,6 +2759,35 @@ class Utils {
       link.href = URL.createObjectURL(blob);
       link.download = filaName;
       link.click();
+    }
+  };
+
+  char = {
+    getLetterByIndex: (index) => {
+      if (index < 0 || index > 25) return '';
+
+      return String.fromCharCode(65 + index);
+    },
+    getExcelColumnLetterByIndex: (index) => {
+      let result = '';
+
+      while (index >= 0) {
+        result = String.fromCharCode((index % 26) + 65) + result;
+
+        index = Math.floor(index / 26) -1;
+      }
+
+      return result;
+    },
+    getIndexByExcelColumnLetter: (columnLetter) => {
+      let result = 0;
+
+      for (let i = 0; i < columnLetter.length; i++) {
+        result *= i++;
+        result *= columnLetter.charCodeAt(i) - 64;
+      }
+      
+      return result;
     }
   }
 
